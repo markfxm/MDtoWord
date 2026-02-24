@@ -8,7 +8,8 @@
       </div>
       <button class="download-btn" @click="downloadWord">
         <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
         </svg>
         下载 Word 文档
       </button>
@@ -20,23 +21,25 @@
       <div class="pane">
         <div class="pane-title">
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
+            </path>
           </svg>
           Markdown 输入区
         </div>
         <!-- 使用 v-model 进行数据双向绑定 -->
-        <textarea 
-          v-model="markdownContent" 
-          placeholder="在此输入或粘贴 Markdown 文本..."
-        ></textarea>
+        <textarea v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本..."></textarea>
       </div>
 
       <!-- 预览区 -->
       <div class="pane">
         <div class="pane-title">
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z">
+            </path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z">
+            </path>
           </svg>
           实时预览
         </div>
@@ -105,7 +108,7 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
       html = html.replace(token, renderedMath);
     } catch (e) {
       // 如果公式有语法错误，原样输出避免页面崩溃
-      html = html.replace(token, mathInfo.text); 
+      html = html.replace(token, mathInfo.text);
     }
   }
   return html;
@@ -156,11 +159,11 @@ const downloadWord = async () => {
 
   try {
     // 转为 docx 文件 Blob 并下载
-    const convertedDocx = await asBlob(documentHtml, { 
-      orientation: 'portrait', 
-      margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 } 
+    const convertedDocx = await asBlob(documentHtml, {
+      orientation: 'portrait',
+      margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
     });
-    
+
     console.log('convertedDocx type:', typeof convertedDocx);
     console.log('convertedDocx is Blob:', convertedDocx instanceof Blob);
     console.log('convertedDocx:', convertedDocx);
@@ -182,7 +185,7 @@ const downloadWord = async () => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  margin: -8px; /* 抵消默认 body margin 如果有的话 */
+  margin: 0;
 }
 
 .header {
@@ -197,8 +200,9 @@ const downloadWord = async () => {
 
 .header-left {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .header h1 {
@@ -211,9 +215,7 @@ const downloadWord = async () => {
 .tagline {
   font-size: 0.875rem;
   color: #6b7280;
-  margin-left: 10px;
-  border-left: 1px solid #e5e7eb;
-  padding-left: 10px;
+  margin-left: 0;
 }
 
 .download-btn {
@@ -232,16 +234,21 @@ const downloadWord = async () => {
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
-.download-btn:hover { background-color: #1d4ed8; transform: translateY(-1px); }
-.download-btn:active { transform: translateY(0); }
+.download-btn:hover {
+  background-color: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.download-btn:active {
+  transform: translateY(0);
+}
 
 .container {
   display: flex;
   flex: 1;
   overflow: hidden;
-  padding: 1.5rem;
+  padding: 1.5rem 1.5rem 3rem 1.5rem;
   gap: 1.5rem;
-  max-width: 1600px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
@@ -290,22 +297,99 @@ textarea {
   line-height: 1.7;
   font-size: 15px;
   color: #24292f;
+  text-align: left;
 }
 
 /* 预览区 Markdown 样式 - 需使用 :deep() 穿透作用域 */
-.preview :deep(h1), .preview :deep(h2), .preview :deep(h3), .preview :deep(h4) { font-weight: 600; margin-top: 24px; margin-bottom: 16px; line-height: 1.25; }
-.preview :deep(h1) { font-size: 2em; border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; }
-.preview :deep(h2) { font-size: 1.5em; border-bottom: 1px solid #d0d7de; padding-bottom: 0.3em; }
-.preview :deep(h3) { font-size: 1.25em; }
-.preview :deep(p) { margin-bottom: 16px; }
-.preview :deep(a) { color: #0969da; text-decoration: none; }
-.preview :deep(ul), .preview :deep(ol) { padding-left: 2em; margin-bottom: 16px; }
-.preview :deep(code) { background-color: rgba(175, 184, 193, 0.2); padding: 0.2em 0.4em; border-radius: 6px; font-family: monospace; font-size: 85%; }
-.preview :deep(pre) { background-color: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; margin-bottom: 16px; }
-.preview :deep(pre code) { background-color: transparent; padding: 0; font-size: 85%; }
-.preview :deep(blockquote) { border-left: 0.25em solid #d0d7de; padding: 0 1em; color: #57606a; margin: 0 0 16px 0; }
-.preview :deep(table) { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-.preview :deep(th), .preview :deep(td) { border: 1px solid #d0d7de; padding: 6px 13px; }
-.preview :deep(th) { background-color: #f6f8fa; font-weight: 600; }
-.preview :deep(img) { max-width: 100%; box-sizing: content-box; }
+.preview :deep(h1),
+.preview :deep(h2),
+.preview :deep(h3),
+.preview :deep(h4) {
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  line-height: 1.25;
+}
+
+.preview :deep(h1) {
+  font-size: 2em;
+  border-bottom: 1px solid #d0d7de;
+  padding-bottom: 0.3em;
+}
+
+.preview :deep(h2) {
+  font-size: 1.5em;
+  border-bottom: 1px solid #d0d7de;
+  padding-bottom: 0.3em;
+}
+
+.preview :deep(h3) {
+  font-size: 1.25em;
+}
+
+.preview :deep(p) {
+  margin-bottom: 16px;
+}
+
+.preview :deep(a) {
+  color: #0969da;
+  text-decoration: none;
+}
+
+.preview :deep(ul),
+.preview :deep(ol) {
+  padding-left: 2em;
+  margin-bottom: 16px;
+}
+
+.preview :deep(code) {
+  background-color: rgba(175, 184, 193, 0.2);
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 85%;
+}
+
+.preview :deep(pre) {
+  background-color: #f6f8fa;
+  padding: 16px;
+  border-radius: 6px;
+  overflow: auto;
+  margin-bottom: 16px;
+}
+
+.preview :deep(pre code) {
+  background-color: transparent;
+  padding: 0;
+  font-size: 85%;
+}
+
+.preview :deep(blockquote) {
+  border-left: 0.25em solid #d0d7de;
+  padding: 0 1em;
+  color: #57606a;
+  margin: 0 0 16px 0;
+}
+
+.preview :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.preview :deep(th),
+.preview :deep(td) {
+  border: 1px solid #d0d7de;
+  padding: 6px 13px;
+}
+
+.preview :deep(th) {
+  background-color: #f6f8fa;
+  font-weight: 600;
+}
+
+.preview :deep(img) {
+  max-width: 100%;
+  box-sizing: content-box;
+}
 </style>
