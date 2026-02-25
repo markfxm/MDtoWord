@@ -6,13 +6,28 @@
         <h1>📄 Markdown 转 Word</h1>
         <span class="tagline">粘贴你的文章，一键导出排版完美的 .docx 文档</span>
       </div>
-      <button class="download-btn" @click="downloadWord">
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-        </svg>
-        下载 Word 文档
-      </button>
+      <div class="header-right">
+        <label class="compatibility-toggle" title="解决 WPS 和旧版 Word 公式乱码问题">
+          <input type="checkbox" v-model="isWpsCompatible">
+          <span>WPS 兼容模式</span>
+        </label>
+        <label class="compatibility-toggle" title="允许单换行直接转换为换行符（对 PDF 复制很有用）">
+          <input type="checkbox" v-model="isPreserveBreaks">
+          <span>保留换行</span>
+        </label>
+        <label class="compatibility-toggle" title="自动转换 PDF 特殊符号并恢复列表缩进">
+          <input type="checkbox" v-model="isOptimizePdf">
+          <span>PDF 优化</span>
+        </label>
+        <button class="download-btn" @click="downloadWord" :disabled="isDownloading">
+          <svg v-if="!isDownloading" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+          </svg>
+          <span v-else class="spinner"></span>
+          {{ isDownloading ? '正在处理...' : '下载 Word' }}
+        </button>
+      </div>
     </header>
 
     <!-- 主体内容区 -->
@@ -57,6 +72,13 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css'; // 必须引入 KaTeX 的 CSS
 import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
+import html2canvas from 'html2canvas';
+
+// 界面状态
+const isWpsCompatible = ref(true);
+const isPreserveBreaks = ref(true);
+const isOptimizePdf = ref(true);
+const isDownloading = ref(false);
 
 // 初始占位文本
 const markdownContent = ref(`# 操作说明
@@ -68,17 +90,92 @@ const markdownContent = ref(`# 操作说明
 （您可以全选删除这段文字后开始使用）`);
 
 /**
+ * PDF 粘贴内容预处理：修复丢失的列表符号和缩进
+ */
+const optimizePdfContent = (text) => {
+  if (!text) return '';
+
+  let lines = text.split('\n');
+  let result = [];
+  let inNumberedBlock = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    let trimmed = line.trim();
+
+    // 识别 PDF 特殊符号和标准列表
+    const pdfBulletRegex = /^[•●○▪▫]\s*/;
+    const numberedListRegex = /^\d+\.\s+/;
+    const standardListRegex = /^([*+-]|\d+\.)\s+/;
+
+    let processedLine = "";
+    let isListOrHeader = false;
+
+    if (numberedListRegex.test(trimmed)) {
+      inNumberedBlock = true;
+      processedLine = trimmed;
+      isListOrHeader = true;
+    } else if (trimmed === "") {
+      processedLine = "";
+      if (!inNumberedBlock) inNumberedBlock = false;
+    } else {
+      const isPdfBullet = pdfBulletRegex.test(trimmed);
+      const isStandard = standardListRegex.test(trimmed);
+
+      if (isPdfBullet || isStandard) {
+        let marker = "* ";
+        let content = trimmed.replace(pdfBulletRegex, "").replace(standardListRegex, "");
+        let indent = inNumberedBlock ? "   " : "";
+        processedLine = indent + marker + content;
+        isListOrHeader = true;
+      } else {
+        processedLine = (inNumberedBlock ? "   " : "") + trimmed;
+      }
+    }
+
+    // --- 智能合行逻辑 (Smart Unwrapping) ---
+    // 如果上一行不是以标点结尾，且当前行不是列表/标题，则合并
+    if (result.length > 0 && processedLine !== "" && !isListOrHeader) {
+      let lastLine = result[result.length - 1];
+      let lastTrimmed = lastLine.trim();
+
+      // 检查上一行是否是一个可以继续的段落行
+      // 1. 不是列表或标题
+      const lastLineIsList = standardListRegex.test(lastTrimmed) || numberedListRegex.test(lastTrimmed);
+      // 2. 没有以终结标点结尾
+      const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
+
+      if (!lastLineIsList && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
+        // 合并到上一行
+        const hasChinese = /[\u4e00-\u9fa5]/.test(lastLine + processedLine);
+        const joiner = hasChinese ? "" : " ";
+        result[result.length - 1] = lastLine + joiner + trimmed;
+        continue;
+      }
+    }
+
+    result.push(processedLine);
+  }
+
+  return result.join('\n');
+};
+
+/**
  * 核心转换函数
  * @param {string} text - 输入的 Markdown 文本
  * @param {boolean} isForWord - 是否为导出 Word (Word 需要 mathml 格式)
  */
 const renderMarkdownWithMath = (text, isForWord = false) => {
   if (!text) return '';
+
+  // 0. PDF 优化预处理
+  let processedText = isOptimizePdf.value ? optimizePdfContent(text) : text;
+
   let mathTokens = {};
   let tokenIndex = 0;
 
   // 1. 提取块级公式
-  let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
+  processedText = processedText.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
     let token = `MTHBLOCK${tokenIndex}MTH`;
     mathTokens[token] = { text: mathContent, display: true };
     tokenIndex++;
@@ -94,7 +191,7 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
   });
 
   // 3. 基础 markdown 解析
-  let html = marked.parse(processedText);
+  let html = marked.parse(processedText, { breaks: isPreserveBreaks.value });
 
   // 4. 填补渲染后的公式
   for (let token in mathTokens) {
@@ -105,6 +202,10 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
         output: isForWord ? 'mathml' : 'htmlAndMathml',
         throwOnError: false
       });
+
+      // 注：Word 的 docx 转换库通常不直接支持复杂的 MathML。
+      // 以前能显示是因为 <annotation> 里的原始文本被当作普通文字显示了。
+      // 我们在此保留全部输出，但在“标准模式”下载时 Word 可能会回退到显示 LaTeX 源码。
       html = html.replace(token, renderedMath);
     } catch (e) {
       // 如果公式有语法错误，原样输出避免页面崩溃
@@ -126,52 +227,124 @@ const downloadWord = async () => {
     return;
   }
 
-  // 生成专供 Word 使用的 HTML 源（包含纯 MathML）
-  const rawHtml = renderMarkdownWithMath(markdownContent.value, true);
-
-  // 注入 Word 专用排版样式
-  const documentHtml = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <style>
-            body { font-family: "Microsoft YaHei", "SimSun", "Calibri", sans-serif; line-height: 1.6; color: #333333; }
-            h1, h2, h3, h4, h5, h6 { color: #1f2937; margin-top: 20px; margin-bottom: 12px; font-weight: bold; }
-            h1 { font-size: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
-            h2 { font-size: 20px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
-            p { margin-bottom: 14px; }
-            code { font-family: "Courier New", monospace; background-color: #f3f4f6; padding: 2px 4px; border-radius: 3px; font-size: 10.5pt; }
-            pre { background-color: #f3f4f6; padding: 12px; border-radius: 4px; }
-            pre code { background-color: transparent; padding: 0; }
-            blockquote { border-left: 4px solid #d1d5db; margin: 0; padding-left: 12px; color: #4b5563; }
-            table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-            th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
-            th { background-color: #f3f4f6; font-weight: bold; }
-            ul, ol { padding-left: 24px; margin-bottom: 14px; }
-        </style>
-    </head>
-    <body>
-        ${rawHtml}
-    </body>
-    </html>
-  `;
+  isDownloading.value = true;
 
   try {
-    // 转为 docx 文件 Blob 并下载
+    let finalHtmlBody = '';
+
+    if (isWpsCompatible.value) {
+      // WPS 兼容模式：将各公式节点转为图片
+      const previewEl = document.querySelector('.preview');
+      if (!previewEl) throw new Error('找不到预览容器');
+
+      // 1. 克隆一份用于导出，避免直接修改用户看到的预览区
+      const clone = previewEl.cloneNode(true);
+      // 将克隆临时挂载到 DOM，确保样式计算正确（隐藏在屏幕外）
+      clone.style.position = 'fixed';
+      clone.style.left = '-9999px';
+      clone.style.top = '0';
+      clone.style.width = previewEl.clientWidth + 'px';
+      clone.style.height = 'auto';
+      document.body.appendChild(clone);
+
+      try {
+        // 2. 找到预览区真实可见的公式节点
+        const originalMathNodes = previewEl.querySelectorAll('.katex');
+        const cloneMathNodes = clone.querySelectorAll('.katex');
+
+        // 3. 逐个转换并替换
+        for (let i = 0; i < originalMathNodes.length; i++) {
+          const originalNode = originalMathNodes[i];
+          const cloneNode = cloneMathNodes[i];
+
+          // 专门针对 .katex-html 部分进行捕捉，避免 MathML 干扰位置计算
+          const targetToCapture = originalNode.querySelector('.katex-html') || originalNode;
+
+          // 使用 html2canvas 捕捉真实的渲染效果
+          const canvas = await html2canvas(targetToCapture, {
+            backgroundColor: null,
+            scale: 3, // 提高采样率获取更清晰文字
+            useCORS: true,
+            logging: false,
+            removeContainer: true,
+            onclone: (clonedDoc) => {
+              // 在克隆中彻底隐藏 MathML，防止其影响布局
+              const mathmlElements = clonedDoc.querySelectorAll('.katex-mathml');
+              mathmlElements.forEach(el => el.style.display = 'none');
+            }
+          });
+
+          const dataUrl = canvas.toDataURL('image/png');
+
+          // 创建图片标签并替换克隆中的节点
+          const img = document.createElement('img');
+          img.src = dataUrl;
+
+          // 适配公式显示模式
+          if (cloneNode.classList.contains('katex-display')) {
+            img.style.display = 'block';
+            img.style.margin = '1.2em auto';
+          } else {
+            // 行内公式优化：WPS/Word 中的图片基准线通常显著偏高
+            // 使用 middle + 较大的负边距可以更稳健地将公式“压”回正文水平线
+            img.style.verticalAlign = 'middle';
+            img.style.marginBottom = '-4px'; // 强力下拉，解决上漂问题
+            img.style.display = 'inline-block';
+            img.style.marginLeft = '2px';
+            img.style.marginRight = '2px';
+          }
+
+          // 设置合适的大小
+          const rect = targetToCapture.getBoundingClientRect();
+          img.width = rect.width;
+          img.height = rect.height;
+
+          cloneNode.parentNode.replaceChild(img, cloneNode);
+        }
+        finalHtmlBody = clone.innerHTML;
+      } finally {
+        document.body.removeChild(clone);
+      }
+    } else {
+      // 标准模式：直接生成（Word 可能回退到文本显示）
+      finalHtmlBody = renderMarkdownWithMath(markdownContent.value, true);
+    }
+
+    // 注入 Word 专用排版样式
+    // 增加 img 样式确保图片不会由于太大而错位
+    const documentHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <meta charset="utf-8">
+          <style>
+              body { font-family: "Microsoft YaHei", "SimSun", "Calibri", sans-serif; line-height: 1.6; color: #333333; }
+              h1, h2, h3, h4, h5, h6 { color: #1f2937; margin-top: 20px; margin-bottom: 12px; font-weight: bold; }
+              h1 { font-size: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+              p { margin-bottom: 14px; }
+              img { max-width: 100%; height: auto; }
+              table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+              th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
+              ul, ol { padding-left: 24px; margin-bottom: 14px; }
+          </style>
+      </head>
+      <body>
+          ${finalHtmlBody}
+      </body>
+      </html>
+    `;
+
     const convertedDocx = await asBlob(documentHtml, {
       orientation: 'portrait',
       margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
     });
 
-    console.log('convertedDocx type:', typeof convertedDocx);
-    console.log('convertedDocx is Blob:', convertedDocx instanceof Blob);
-    console.log('convertedDocx:', convertedDocx);
-
     saveAs(convertedDocx, '文档导出.docx');
   } catch (error) {
     console.error('导出 Word 出错:', error);
-    alert('导出 Word 时出错，请检查控制台。');
+    alert('导出失败，请检查公式是否过于复杂或尝试刷新页面重试。');
+  } finally {
+    isDownloading.value = false;
   }
 };
 </script>
@@ -218,6 +391,28 @@ const downloadWord = async () => {
   margin-left: 0;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.compatibility-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: #4b5563;
+  cursor: pointer;
+  user-select: none;
+}
+
+.compatibility-toggle input {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
 .download-btn {
   background-color: #2563eb;
   color: white;
@@ -234,13 +429,34 @@ const downloadWord = async () => {
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
-.download-btn:hover {
+.download-btn:disabled {
+  background-color: #94a3b8;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.download-btn:hover:not(:disabled) {
   background-color: #1d4ed8;
   transform: translateY(-1px);
 }
 
-.download-btn:active {
+.download-btn:active:not(:disabled) {
   transform: translateY(0);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #fff;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .container {
