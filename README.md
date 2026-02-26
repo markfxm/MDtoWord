@@ -1,5 +1,68 @@
-# Vue 3 + Vite
+# 📄 Markdown 转 Word 专家
 
-This template should help get you started developing with Vue 3 in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+### 专为排版与公式优化而生的转换工具
 
-Learn more about IDE Support for Vue in the [Vue Docs Scaling up Guide](https://vuejs.org/guide/scaling-up/tooling.html#ide-support).
+这是一个简单、高效、且注重排版质量的 Markdown 转 Word (.docx) 网页工具。它不仅能将 Markdown 转换为 Word，还专门针对**数学公式兼容性**和 **PDF 文本粘贴**进行了深度优化，非常适合科研人员、学生和文档工作者使用。
+
+---
+
+## ✨ 核心功能
+
+- **🚀 实时预览**：采用分栏设计，左侧输入 Markdown，右侧实时显示排版效果。
+- **🧪 完美公式支持**：
+    - 集成 KaTeX 插件，支持复杂的数学公式。
+    - **WPS 兼容模式**：一键将公式转换为高清晰度图片并嵌入 Word。彻底解决普通转换工具在 Word/WPS 中打开时公式乱码、显示不全或上浮的问题。
+- **📄 PDF 粘贴优化**：
+    - 智能识别并修复从 PDF 复制文本时产生的断行、多余空格。
+    - 自动恢复丢失的列表符号（如 • ● ○）及缩进层级。
+- **🎨 精美排版**：预设了符合中文阅读习惯的字体（微软雅黑、宋体）及行间距，导出的文档无需二次调整即可直接使用。
+- **🔒 隐私安全**：所有转换过程均在您的**浏览器本地**完成，您的文章和数据绝不会被上传到任何服务器，确保信息绝对私密。
+
+---
+
+## 🛠 如何使用
+
+1. **粘贴文本**：在左侧输入框粘贴您的 Markdown 内容。
+2. **开启优化**（可选）：
+    - 如果您的文章包含数学公式，建议勾选右上角的 **“WPS 兼容模式”**。
+    - 如果您的文本是从 PDF 复制来的，请勾选 **“PDF 优化”** 以自动修复排版。
+3. **实时检查**：在右侧预览区确认排版是否符合预期。
+4. **一键导出**：点击右上角的 **“下载 Word”** 按钮，即可获得处理好的 `.docx` 文件。
+
+---
+
+## 💻 技术实现
+
+本项目基于现代前端技术栈构建：
+
+- **框架**：Vue 3 + Vite
+- **解析**：Marked (Markdown 解析) + KaTeX (数学公式渲染)
+- **导出**：html-docx-js-typescript + file-saver
+- **公式处理**：html2canvas (用于 WPS 兼容模式下的公式转图)
+
+---
+
+## 📥 本地开发
+
+如果您想在本地运行本项目：
+
+```bash
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+
+# 构建生产版本
+npm run build
+```
+
+---
+
+## 📄 开源协议
+
+本项目采用 [MIT License](LICENSE) 协议。您可以自由地使用、修改和分发本工具。
+
+---
+
+**Markdown 转 Word 专家** —— 让您的文档转换不再为排版和公式而烦恼。
