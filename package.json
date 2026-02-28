@@ -15,6 +15,7 @@
     "html2canvas": "^1.4.1",
     "katex": "^0.16.33",
     "marked": "^17.0.3",
+    "pdfjs-dist": "^4.10.38",
     "vue": "^3.5.25"
   },
   "devDependencies": {

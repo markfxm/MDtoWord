@@ -35,12 +35,25 @@
       <!-- 输入区 -->
       <div class="pane">
         <div class="pane-title">
-          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
-            </path>
-          </svg>
-          Markdown 输入区
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
+              </path>
+            </svg>
+            Markdown 输入区
+          </div>
+          <div class="pane-actions">
+            <button class="action-btn" @click="triggerPdfUpload" :disabled="isReadingPdf">
+              <svg v-if="!isReadingPdf" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+              </svg>
+              <span v-else class="spinner mini"></span>
+              {{ isReadingPdf ? '解析中...' : '上传 PDF' }}
+            </button>
+            <input type="file" ref="fileInput" @change="handlePdfUpload" accept=".pdf" style="display: none;">
+          </div>
         </div>
         <!-- 使用 v-model 进行数据双向绑定 -->
         <textarea v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本..."></textarea>
@@ -73,12 +86,21 @@ import 'katex/dist/katex.min.css'; // 必须引入 KaTeX 的 CSS
 import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
 import html2canvas from 'html2canvas';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// 设置 PDF.js Worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 // 界面状态
 const isWpsCompatible = ref(true);
 const isPreserveBreaks = ref(true);
 const isOptimizePdf = ref(true);
 const isDownloading = ref(false);
+const isReadingPdf = ref(false);
+const fileInput = ref(null);
 
 // 初始占位文本
 const markdownContent = ref(`# 操作说明
@@ -347,6 +369,59 @@ const downloadWord = async () => {
     isDownloading.value = false;
   }
 };
+
+/**
+ * 触发文件选择
+ */
+const triggerPdfUpload = () => {
+  fileInput.value?.click();
+};
+
+/**
+ * 处理文件上传
+ */
+const handlePdfUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  if (file.type !== 'application/pdf') {
+    alert('请选择 PDF 文件！');
+    return;
+  }
+
+  isReadingPdf.value = true;
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      let lastY = -1;
+      let pageText = '';
+
+      for (const item of textContent.items) {
+        if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+          pageText += '\n';
+        }
+        pageText += item.str;
+        lastY = item.transform[5];
+      }
+      fullText += pageText + '\n\n';
+    }
+
+    markdownContent.value = fullText.trim();
+    // 清除文件输入值，以便于再次上传同一文件
+    event.target.value = '';
+  } catch (error) {
+    console.error('解析 PDF 出错:', error);
+    alert('解析 PDF 失败，请确保文件未加密且格式正确。');
+  } finally {
+    isReadingPdf.value = false;
+  }
+};
 </script>
 
 <style scoped>
@@ -490,7 +565,45 @@ const downloadWord = async () => {
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-btn {
+  background-color: transparent;
+  border: 1px solid #e5e7eb;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background-color: #f3f4f6;
+  border-color: #d1d5db;
+  color: #1f2937;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner.mini {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
 }
 
 textarea {
