@@ -119,59 +119,68 @@ const optimizePdfContent = (text) => {
 
   let lines = text.split('\n');
   let result = [];
-  let inNumberedBlock = false;
+  let pendingMarker = null;
+
+  const pdfBulletRegex = /^[•●○▪▫](?:\s|$)/;
+  const numberedListRegex = /^\d+[\.、]\s*/;
+  const mdListRegex = /^[*+-]\s+/;
 
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    let trimmed = line.trim();
+    let rawLine = lines[i];
+    let trimmed = rawLine.trim();
 
-    // 识别 PDF 特殊符号和标准列表
-    const pdfBulletRegex = /^[•●○▪▫]\s*/;
-    const numberedListRegex = /^\d+\.\s+/;
-    const standardListRegex = /^([*+-]|\d+\.)\s+/;
-
-    let processedLine = "";
-    let isListOrHeader = false;
-
-    if (numberedListRegex.test(trimmed)) {
-      inNumberedBlock = true;
-      processedLine = trimmed;
-      isListOrHeader = true;
-    } else if (trimmed === "") {
-      processedLine = "";
-      if (!inNumberedBlock) inNumberedBlock = false;
-    } else {
-      const isPdfBullet = pdfBulletRegex.test(trimmed);
-      const isStandard = standardListRegex.test(trimmed);
-
-      if (isPdfBullet || isStandard) {
-        let marker = "* ";
-        let content = trimmed.replace(pdfBulletRegex, "").replace(standardListRegex, "");
-        let indent = inNumberedBlock ? "   " : "";
-        processedLine = indent + marker + content;
-        isListOrHeader = true;
-      } else {
-        processedLine = (inNumberedBlock ? "   " : "") + trimmed;
-      }
+    if (trimmed === "") {
+      // 如果正在等待列表内容的文字，跳过空行
+      if (pendingMarker) continue;
+      result.push("");
+      continue;
     }
 
-    // --- 智能合行逻辑 (Smart Unwrapping) ---
-    // 如果上一行不是以标点结尾，且当前行不是列表/标题，则合并
-    if (result.length > 0 && processedLine !== "" && !isListOrHeader) {
-      let lastLine = result[result.length - 1];
+    let processedLine = trimmed;
+    let currentLineMarker = null;
+
+    // 1. 识别列表标记
+    if (pdfBulletRegex.test(trimmed)) {
+      currentLineMarker = "* ";
+      processedLine = trimmed.replace(pdfBulletRegex, "").trim();
+    } else if (numberedListRegex.test(trimmed)) {
+      const match = trimmed.match(numberedListRegex);
+      const numPart = match[0].match(/\d+/)[0];
+      currentLineMarker = `${numPart}. `;
+      processedLine = trimmed.replace(numberedListRegex, "").trim();
+    } else if (mdListRegex.test(trimmed)) {
+      const match = trimmed.match(mdListRegex);
+      currentLineMarker = match[0];
+      processedLine = trimmed.replace(mdListRegex, "").trim();
+    }
+
+    // 2. 处理标记与文字分离的情况 (Dangling Marker)
+    if (currentLineMarker) {
+      if (processedLine === "") {
+        pendingMarker = currentLineMarker;
+        continue;
+      } else {
+        processedLine = currentLineMarker + processedLine;
+        pendingMarker = null;
+      }
+    } else if (pendingMarker) {
+      processedLine = pendingMarker + processedLine;
+      pendingMarker = null;
+    }
+
+    // 3. 智能合行逻辑 (加强版)
+    if (result.length > 0) {
+      let lastLineIndex = result.length - 1;
+      let lastLine = result[lastLineIndex];
       let lastTrimmed = lastLine.trim();
 
-      // 检查上一行是否是一个可以继续的段落行
-      // 1. 不是列表或标题
-      const lastLineIsList = standardListRegex.test(lastTrimmed) || numberedListRegex.test(lastTrimmed);
-      // 2. 没有以终结标点结尾
+      // 如果当前行不是新段落/列表/标题，且上一行没有结束标点，则合并
       const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
+      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed);
 
-      if (!lastLineIsList && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
-        // 合并到上一行
-        const hasChinese = /[\u4e00-\u9fa5]/.test(lastLine + processedLine);
-        const joiner = hasChinese ? "" : " ";
-        result[result.length - 1] = lastLine + joiner + trimmed;
+      if (!isStartOfNewPara && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
+        const joiner = /[\u4e00-\u9fa5]/.test(lastLine + processedLine) ? "" : " ";
+        result[lastLineIndex] = lastLine + joiner + processedLine;
         continue;
       }
     }
@@ -180,6 +189,66 @@ const optimizePdfContent = (text) => {
   }
 
   return result.join('\n');
+};
+
+/**
+ * 将简单的 LaTeX 公式转换为带样式的 HTML 文本，用于支持 Word 中的字符级选中
+ */
+const convertSimpleMathToHtml = (latex) => {
+  if (!latex) return '';
+  let html = latex.trim();
+
+  // 1. 符号映射转换 (将 LaTeX 常用数学符号转为 Unicode)
+  const symbolMap = {
+    '\\ge': '≥', '\\le': '≤', '\\pm': '±', '\\approx': '≈', '\\neq': '≠',
+    '\\cdot': '·', '\\times': '×', '\\div': '÷', '\\infty': '∞',
+    '\\sigma': 'σ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+    '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ', '\\pi': 'π',
+    '\\phi': 'φ', '\\omega': 'ω', '\\Delta': 'Δ', '\\Omega': 'Ω',
+    '\\partial': '∂', '\\nabla': '∇', '\\forall': '∀', '\\exists': '∃'
+  };
+
+  for (const [key, val] of Object.entries(symbolMap)) {
+    // 改进正则：确保匹配反斜杠开始，且后续不接字母（除非是完全匹配）
+    const escapedKey = key.replace(/\\/g, '\\\\');
+    // 如果后面紧跟 YS 这种字母，只要 key 匹配完了，就应该替换 (例如 \sigmaYS -> σYS)
+    const regex = new RegExp(escapedKey + '(?![a-zA-Z])|' + escapedKey, 'g');
+    html = html.replace(regex, val);
+  }
+
+  // 2. 基础清理
+  html = html.replace(/\\text\{(.+?)\}/g, '$1');
+
+  // 3. 处理上下标
+  html = html.replace(/_\{(.+?)\}/g, '<sub>$1</sub>');
+  html = html.replace(/_([a-zA-Z0-9])/g, '<sub>$1</sub>');
+  html = html.replace(/\^\{(.+?)\}/g, '<sup>$1</sup>');
+  html = html.replace(/\^([a-zA-Z0-9])/g, '<sup>$1</sup>');
+
+  // 4. 数学变量斜体处理 (仅针对单个字母变量，避开 HTML 标签)
+  // 统一使用 Times New Roman 会更像公式
+  return `<span style="font-family: 'Times New Roman', serif;">${html.replace(/(?<!<[^>]*)\b([a-zA-Z])\b(?![^<]*>)/g, '<i>$1</i>')}</span>`;
+};
+
+/**
+ * 判断公式是否足够简单可以转为 HTML 文本
+ */
+const isSimpleMath = (latex) => {
+  if (!latex) return false;
+  // 排除复杂结构：根号、分式、矩阵、求和、积分、大型括号
+  const complexPatterns = /\\frac|\\sqrt|\\sum|\\int|\\begin|\\matrix|\\over|\\left|\\right|\\mathcal|\\mathbb|\\Large|\\small/;
+  if (complexPatterns.test(latex)) return false;
+
+  // 如果包含未被 convertSimpleMathToHtml 处理的反斜杠命令，则不视为简单公式
+  // 允许的命令列表
+  const allowedCmds = ['\\ge', '\\le', '\\pm', '\\approx', '\\neq', '\\cdot', '\\times', '\\div', '\\infty', '\\sigma', '\\alpha', '\\beta', '\\gamma', '\\delta', '\\epsilon', '\\theta', '\\lambda', '\\mu', '\\pi', '\\phi', '\\omega', '\\Delta', '\\Omega', '\\partial', '\\nabla', '\\forall', '\\exists', '\\text'];
+
+  const cmds = latex.match(/\\[a-zA-Z]+/g) || [];
+  for (const cmd of cmds) {
+    if (!allowedCmds.includes(cmd)) return false;
+  }
+
+  return latex.length < 80; // 适当放宽长度
 };
 
 /**
@@ -226,9 +295,14 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
       });
 
       // 注：Word 的 docx 转换库通常不直接支持复杂的 MathML。
-      // 以前能显示是因为 <annotation> 里的原始文本被当作普通文字显示了。
-      // 我们在此保留全部输出，但在“标准模式”下载时 Word 可能会回退到显示 LaTeX 源码。
-      html = html.replace(token, renderedMath);
+      // 为解决选中和复制问题，我们在导出 HTML 中嵌入原始 LaTeX
+      if (isForWord) {
+        // 在 Word 中隐藏 LaTeX 源码，但保持其实在性以便搜索和复制
+        const latexSource = `<span style="font-size:1px;color:transparent;mso-hide:all">${mathInfo.text}</span>`;
+        html = html.replace(token, renderedMath + latexSource);
+      } else {
+        html = html.replace(token, renderedMath);
+      }
     } catch (e) {
       // 如果公式有语法错误，原样输出避免页面崩溃
       html = html.replace(token, mathInfo.text);
@@ -282,6 +356,31 @@ const downloadWord = async () => {
           // 专门针对 .katex-html 部分进行捕捉，避免 MathML 干扰位置计算
           const targetToCapture = originalNode.querySelector('.katex-html') || originalNode;
 
+          // 尝试从 MathML 的 annotation 节点获取原始文本
+          let rawLatex = "";
+          const annotation = originalNode.querySelector('annotation');
+          if (annotation) {
+            rawLatex = annotation.textContent;
+          }
+
+          // --- 智选模式：如果公式简单，直接输出 HTML 文本而非图片 ---
+          if (isSimpleMath(rawLatex)) {
+            const textHtml = convertSimpleMathToHtml(rawLatex);
+            const textSpan = document.createElement('span');
+            textSpan.innerHTML = textHtml;
+
+            if (cloneNode.classList.contains('katex-display')) {
+              const div = document.createElement('div');
+              div.style.textAlign = 'center';
+              div.style.margin = '1em 0';
+              div.appendChild(textSpan);
+              cloneNode.parentNode.replaceChild(div, cloneNode);
+            } else {
+              cloneNode.parentNode.replaceChild(textSpan, cloneNode);
+            }
+            continue;
+          }
+
           // 使用 html2canvas 捕捉真实的渲染效果
           const canvas = await html2canvas(targetToCapture, {
             backgroundColor: null,
@@ -298,31 +397,77 @@ const downloadWord = async () => {
 
           const dataUrl = canvas.toDataURL('image/png');
 
-          // 创建图片标签并替换克隆中的节点
+          // 创建图片标签
           const img = document.createElement('img');
           img.src = dataUrl;
 
-          // 适配公式显示模式
-          if (cloneNode.classList.contains('katex-display')) {
-            img.style.display = 'block';
-            img.style.margin = '1.2em auto';
-          } else {
-            // 行内公式优化：WPS/Word 中的图片基准线通常显著偏高
-            // 使用 middle + 较大的负边距可以更稳健地将公式“压”回正文水平线
-            img.style.verticalAlign = 'middle';
-            img.style.marginBottom = '-4px'; // 强力下拉，解决上漂问题
-            img.style.display = 'inline-block';
-            img.style.marginLeft = '2px';
-            img.style.marginRight = '2px';
-          }
+          img.alt = rawLatex || 'Math Formula';
+          img.title = 'LaTeX: ' + (rawLatex || '');
 
-          // 设置合适的大小
+          // 设置合适的大小（必须 restore，否则图片会比例失调或巨大）
           const rect = targetToCapture.getBoundingClientRect();
           img.width = rect.width;
           img.height = rect.height;
 
-          cloneNode.parentNode.replaceChild(img, cloneNode);
+          // 关键：创建一个“堆叠”容器，让文字完全处于图片下方
+          const wrapper = document.createElement('span');
+          wrapper.style.position = 'relative';
+          wrapper.style.display = 'inline-block';
+          wrapper.style.verticalAlign = 'middle';
+          wrapper.style.lineHeight = '0';
+
+          // 设置隐藏文本：放在图片“正下方”，并设置透明和极小字号
+          const latexSpan = document.createElement('span');
+          latexSpan.style.position = 'absolute';
+          latexSpan.style.left = '0';
+          latexSpan.style.top = '0';
+          latexSpan.style.zIndex = '-1';
+          latexSpan.style.fontSize = '1pt';
+          latexSpan.style.color = 'rgba(255,255,255,0.01)'; // 近乎全透明
+          latexSpan.style.whiteSpace = 'nowrap';
+          latexSpan.style.setProperty('mso-hide', 'all'); // Word 专属隐藏
+          latexSpan.textContent = rawLatex || ' ';
+
+          // 适配公式显示模式
+          if (cloneNode.classList.contains('katex-display')) {
+            const blockWrapper = document.createElement('div');
+            blockWrapper.style.textAlign = 'center';
+            blockWrapper.style.margin = '1.2em auto';
+
+            img.style.display = 'inline-block';
+
+            wrapper.appendChild(latexSpan);
+            wrapper.appendChild(img);
+            blockWrapper.appendChild(wrapper);
+            cloneNode.parentNode.replaceChild(blockWrapper, cloneNode);
+          } else {
+            // 行内公式
+            img.style.display = 'inline-block';
+            img.style.verticalAlign = 'middle';
+            img.style.marginBottom = '-4px';
+            img.style.marginLeft = '2px';
+            img.style.marginRight = '2px';
+
+            wrapper.appendChild(latexSpan);
+            wrapper.appendChild(img);
+            cloneNode.parentNode.replaceChild(wrapper, cloneNode);
+          }
         }
+
+        // --- WPS 兼容性增强：清理 <li> 中的嵌套层级 ---
+        const listItems = clone.querySelectorAll('li');
+        listItems.forEach(li => {
+          // 如果 <li> 内部有 <p>，WPS 会认为要另起一段，导致项目符号单独占一行。
+          const paragraphs = li.querySelectorAll('p, div');
+          paragraphs.forEach(p => {
+            const span = document.createElement('span');
+            span.innerHTML = p.innerHTML;
+            p.parentNode.replaceChild(span, p);
+          });
+          // 移除辅助换行，避免 WPS 解析出多余空行
+          li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
+        });
+
         finalHtmlBody = clone.innerHTML;
       } finally {
         document.body.removeChild(clone);
@@ -332,13 +477,20 @@ const downloadWord = async () => {
       finalHtmlBody = renderMarkdownWithMath(markdownContent.value, true);
     }
 
-    // 注入 Word 专用排版样式
-    // 增加 img 样式确保图片不会由于太大而错位
+    // 注入 Word 专用排版样式并优化命名空间
     const documentHtml = `
-      <!DOCTYPE html>
-      <html>
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
       <head>
           <meta charset="utf-8">
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>100</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
           <style>
               body { font-family: "Microsoft YaHei", "SimSun", "Calibri", sans-serif; line-height: 1.6; color: #333333; }
               h1, h2, h3, h4, h5, h6 { color: #1f2937; margin-top: 20px; margin-bottom: 12px; font-weight: bold; }
@@ -348,6 +500,10 @@ const downloadWord = async () => {
               table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
               th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
               ul, ol { padding-left: 24px; margin-bottom: 14px; }
+              i { font-family: "Times New Roman", serif; font-style: italic; }
+              sub, sup { font-size: 75%; line-height: 0; position: relative; vertical-align: baseline; }
+              sup { top: -0.5em; }
+              sub { bottom: -0.25em; }
           </style>
       </head>
       <body>
