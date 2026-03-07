@@ -205,7 +205,7 @@ const convertSimpleMathToHtml = (latex) => {
     '\\sigma': 'σ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
     '\\epsilon': 'ε', '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ', '\\pi': 'π',
     '\\phi': 'φ', '\\omega': 'ω', '\\Delta': 'Δ', '\\Omega': 'Ω',
-    '\\partial': '∂', '\\nabla': '∇', '\\forall': '∀', '\\exists': '∃'
+    '\\partial': '∂', '\\nabla': '∇', '\\forall': '∀', '\\exists': '∃', '\\circ': '°', '\\sim': '~'
   };
 
   for (const [key, val] of Object.entries(symbolMap)) {
@@ -215,6 +215,11 @@ const convertSimpleMathToHtml = (latex) => {
     const regex = new RegExp(escapedKey + '(?![a-zA-Z])|' + escapedKey, 'g');
     html = html.replace(regex, val);
   }
+
+  // 1.5 处理根号和特殊符号
+  html = html.replace(/\\sqrt\{(.+?)\}/g, '√$1');
+  html = html.replace(/\\sqrt\s*([a-zA-Z0-9])/g, '√$1');
+  html = html.replace(/\\%/g, '%');
 
   // 2. 基础清理
   html = html.replace(/\\text\{(.+?)\}/g, '$1');
@@ -235,13 +240,13 @@ const convertSimpleMathToHtml = (latex) => {
  */
 const isSimpleMath = (latex) => {
   if (!latex) return false;
-  // 排除复杂结构：根号、分式、矩阵、求和、积分、大型括号
-  const complexPatterns = /\\frac|\\sqrt|\\sum|\\int|\\begin|\\matrix|\\over|\\left|\\right|\\mathcal|\\mathbb|\\Large|\\small/;
+  // 排除复杂结构：分式、矩阵、求和、积分、大型括号
+  const complexPatterns = /\\frac|\\sum|\\int|\\begin|\\matrix|\\over|\\left|\\right|\\mathcal|\\mathbb|\\Large|\\small/;
   if (complexPatterns.test(latex)) return false;
 
   // 如果包含未被 convertSimpleMathToHtml 处理的反斜杠命令，则不视为简单公式
   // 允许的命令列表
-  const allowedCmds = ['\\ge', '\\le', '\\pm', '\\approx', '\\neq', '\\cdot', '\\times', '\\div', '\\infty', '\\sigma', '\\alpha', '\\beta', '\\gamma', '\\delta', '\\epsilon', '\\theta', '\\lambda', '\\mu', '\\pi', '\\phi', '\\omega', '\\Delta', '\\Omega', '\\partial', '\\nabla', '\\forall', '\\exists', '\\text'];
+  const allowedCmds = ['\\ge', '\\le', '\\pm', '\\approx', '\\neq', '\\cdot', '\\times', '\\div', '\\infty', '\\sigma', '\\alpha', '\\beta', '\\gamma', '\\delta', '\\epsilon', '\\theta', '\\lambda', '\\mu', '\\pi', '\\phi', '\\omega', '\\Delta', '\\Omega', '\\partial', '\\nabla', '\\forall', '\\exists', '\\text', '\\sqrt', '\\circ', '\\sim'];
 
   const cmds = latex.match(/\\[a-zA-Z]+/g) || [];
   for (const cmd of cmds) {
@@ -295,14 +300,7 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
       });
 
       // 注：Word 的 docx 转换库通常不直接支持复杂的 MathML。
-      // 为解决选中和复制问题，我们在导出 HTML 中嵌入原始 LaTeX
-      if (isForWord) {
-        // 在 Word 中隐藏 LaTeX 源码，但保持其实在性以便搜索和复制
-        const latexSource = `<span style="font-size:1px;color:transparent;mso-hide:all">${mathInfo.text}</span>`;
-        html = html.replace(token, renderedMath + latexSource);
-      } else {
-        html = html.replace(token, renderedMath);
-      }
+      html = html.replace(token, renderedMath);
     } catch (e) {
       // 如果公式有语法错误，原样输出避免页面崩溃
       html = html.replace(token, mathInfo.text);
@@ -409,25 +407,6 @@ const downloadWord = async () => {
           img.width = rect.width;
           img.height = rect.height;
 
-          // 关键：创建一个“堆叠”容器，让文字完全处于图片下方
-          const wrapper = document.createElement('span');
-          wrapper.style.position = 'relative';
-          wrapper.style.display = 'inline-block';
-          wrapper.style.verticalAlign = 'middle';
-          wrapper.style.lineHeight = '0';
-
-          // 设置隐藏文本：放在图片“正下方”，并设置透明和极小字号
-          const latexSpan = document.createElement('span');
-          latexSpan.style.position = 'absolute';
-          latexSpan.style.left = '0';
-          latexSpan.style.top = '0';
-          latexSpan.style.zIndex = '-1';
-          latexSpan.style.fontSize = '1pt';
-          latexSpan.style.color = 'rgba(255,255,255,0.01)'; // 近乎全透明
-          latexSpan.style.whiteSpace = 'nowrap';
-          latexSpan.style.setProperty('mso-hide', 'all'); // Word 专属隐藏
-          latexSpan.textContent = rawLatex || ' ';
-
           // 适配公式显示模式
           if (cloneNode.classList.contains('katex-display')) {
             const blockWrapper = document.createElement('div');
@@ -436,9 +415,7 @@ const downloadWord = async () => {
 
             img.style.display = 'inline-block';
 
-            wrapper.appendChild(latexSpan);
-            wrapper.appendChild(img);
-            blockWrapper.appendChild(wrapper);
+            blockWrapper.appendChild(img);
             cloneNode.parentNode.replaceChild(blockWrapper, cloneNode);
           } else {
             // 行内公式
@@ -448,9 +425,7 @@ const downloadWord = async () => {
             img.style.marginLeft = '2px';
             img.style.marginRight = '2px';
 
-            wrapper.appendChild(latexSpan);
-            wrapper.appendChild(img);
-            cloneNode.parentNode.replaceChild(wrapper, cloneNode);
+            cloneNode.parentNode.replaceChild(img, cloneNode);
           }
         }
 
