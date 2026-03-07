@@ -16,6 +16,7 @@
     "katex": "^0.16.33",
     "marked": "^17.0.3",
     "pdfjs-dist": "^4.10.38",
+    "twemoji": "^14.0.2",
     "vue": "^3.5.25"
   },
   "devDependencies": {

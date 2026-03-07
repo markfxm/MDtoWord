@@ -452,6 +452,98 @@ const downloadWord = async () => {
       finalHtmlBody = renderMarkdownWithMath(markdownContent.value, true);
     }
 
+    // --- 增强：使用 Twemoji 将 Emoji 转换为图片，彻底解决 Word/WPS 中黑白或方块的问题 ---
+    const wrapEmojisInHtml = (htmlStr) => {
+      // 匹配绝大多数常见 Emoji 的正则
+      const emojiRegex = /([\u{1F300}-\u{1F5FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F191}-\u{1F251}])/gu;
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = htmlStr;
+
+      const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
+      let node;
+      const textNodes = [];
+      while ((node = walker.nextNode())) {
+        if (emojiRegex.test(node.nodeValue)) {
+          textNodes.push(node);
+        }
+      }
+
+      // 获取 emoji 的 unicode 代码点 (用于拼接图片 URL)
+      const toCodePoint = (unicodeSurrogates) => {
+        const r = [];
+        let c = 0, p = 0, i = 0;
+        while (i < unicodeSurrogates.length) {
+          c = unicodeSurrogates.charCodeAt(i++);
+          if (p) {
+            r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
+            p = 0;
+          } else if (0xD800 <= c && c <= 0xDBFF) {
+            p = c;
+          } else {
+            r.push(c.toString(16));
+          }
+        }
+        return r.join('-');
+      };
+
+      textNodes.forEach(n => {
+        emojiRegex.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let lastIdx = 0;
+        let match;
+
+        while ((match = emojiRegex.exec(n.nodeValue)) !== null) {
+          if (match.index > lastIdx) {
+            fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx, match.index)));
+          }
+
+          const codePoint = toCodePoint(match[0]);
+          // 使用开源 CDN 获取标准 Twemoji 图像
+          const img = document.createElement('img');
+          img.src = `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${codePoint}.png`;
+          img.alt = match[0];
+
+          // 动态计算父节点的字号大小
+          let fontSizePx = 18; // 默认值
+          try {
+            if (n.parentNode) {
+              const computedStyle = window.getComputedStyle(n.parentNode);
+              const fontSizeStr = computedStyle.fontSize;
+              if (fontSizeStr && fontSizeStr.endsWith('px')) {
+                fontSizePx = parseFloat(fontSizeStr);
+              }
+            }
+          } catch (e) {
+            // 忽略计算异常
+          }
+
+          // Word 对图片的尺寸识别强依赖 width 和 height 属性
+          // 取字号的 1.2 倍作为宽高，与 CSS 的 1.2em 保持一致
+          const size = Math.round(fontSizePx * 1.2);
+          img.setAttribute('width', size.toString());
+          img.setAttribute('height', size.toString());
+
+          img.style.height = '1.2em';
+          img.style.width = '1.2em';
+          img.style.margin = '0 0.1em';
+          img.style.verticalAlign = '-0.2em';
+          img.style.display = 'inline-block';
+
+          fragment.appendChild(img);
+          lastIdx = emojiRegex.lastIndex;
+        }
+
+        if (lastIdx < n.nodeValue.length) {
+          fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx)));
+        }
+        n.parentNode.replaceChild(fragment, n);
+      });
+
+      return tempDiv.innerHTML;
+    };
+
+    finalHtmlBody = wrapEmojisInHtml(finalHtmlBody);
+
     // 注入 Word 专用排版样式并优化命名空间
     const documentHtml = `
       <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
@@ -467,7 +559,7 @@ const downloadWord = async () => {
           </xml>
           <![endif]-->
           <style>
-              body { font-family: "Microsoft YaHei", "SimSun", "Calibri", sans-serif; line-height: 1.6; color: #333333; }
+              body { font-family: "Microsoft YaHei", "SimSun", "Calibri", "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol", sans-serif; line-height: 1.6; color: #333333; }
               h1, h2, h3, h4, h5, h6 { color: #1f2937; margin-top: 20px; margin-bottom: 12px; font-weight: bold; }
               h1 { font-size: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
               p { margin-bottom: 14px; }
