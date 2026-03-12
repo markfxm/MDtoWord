@@ -1,0 +1,9 @@
+{
+  "env_id": "${env:VITE_TCB_ENV_ID}",
+  "version": "2.0",
+  "$schema": "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
+  "framework": {
+    "name": "mdtoword",
+    "plugins": {}
+  }
+}

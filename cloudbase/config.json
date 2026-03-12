@@ -1,0 +1,36 @@
+{
+  "functions": [
+    {
+      "name": "payment",
+      "description": "处理支付相关逻辑",
+      "handler": "payment.main",
+      "runtime": "Nodejs16.13",
+      "memorySize": 256,
+      "timeout": 60,
+      "envVariables": {}
+    },
+    {
+      "name": "auth",
+      "description": "处理认证相关逻辑",
+      "handler": "auth.main",
+      "runtime": "Nodejs16.13",
+      "memorySize": 128,
+      "timeout": 60,
+      "envVariables": {}
+    }
+  ],
+  "database": [
+    {
+      "collectionName": "users",
+      "description": "用户信息表"
+    },
+    {
+      "collectionName": "orders",
+      "description": "订单记录表"
+    },
+    {
+      "collectionName": "usage_logs",
+      "description": "使用记录表"
+    }
+  ]
+}

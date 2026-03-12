@@ -1,0 +1,145 @@
+[
+  {
+    "collectionName": "users",
+    "description": "用户信息表",
+    "fields": [
+      {
+        "name": "_id",
+        "type": "string",
+        "description": "用户ID"
+      },
+      {
+        "name": "email",
+        "type": "string",
+        "description": "用户邮箱"
+      },
+      {
+        "name": "phone",
+        "type": "string",
+        "description": "用户手机号"
+      },
+      {
+        "name": "isVip",
+        "type": "boolean",
+        "description": "是否为会员"
+      },
+      {
+        "name": "vipExpireTime",
+        "type": "number",
+        "description": "会员过期时间戳"
+      },
+      {
+        "name": "freeQuota",
+        "type": "number",
+        "description": "免费额度"
+      },
+      {
+        "name": "remainingQuota",
+        "type": "number",
+        "description": "剩余额度"
+      },
+      {
+        "name": "createdAt",
+        "type": "number",
+        "description": "创建时间戳"
+      },
+      {
+        "name": "updatedAt",
+        "type": "number",
+        "description": "更新时间戳"
+      }
+    ]
+  },
+  {
+    "collectionName": "orders",
+    "description": "订单表",
+    "fields": [
+      {
+        "name": "_id",
+        "type": "string",
+        "description": "订单ID"
+      },
+      {
+        "name": "userId",
+        "type": "string",
+        "description": "用户ID"
+      },
+      {
+        "name": "orderNo",
+        "type": "string",
+        "description": "订单号"
+      },
+      {
+        "name": "productId",
+        "type": "string",
+        "description": "商品ID"
+      },
+      {
+        "name": "productName",
+        "type": "string",
+        "description": "商品名称"
+      },
+      {
+        "name": "amount",
+        "type": "number",
+        "description": "订单金额（分）"
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "description": "订单状态：pending/paid/failed/refunded"
+      },
+      {
+        "name": "paymentMethod",
+        "type": "string",
+        "description": "支付方式：wechat/alipay"
+      },
+      {
+        "name": "transactionId",
+        "type": "string",
+        "description": "支付平台交易号"
+      },
+      {
+        "name": "paidAt",
+        "type": "number",
+        "description": "支付时间戳"
+      },
+      {
+        "name": "createdAt",
+        "type": "number",
+        "description": "创建时间戳"
+      }
+    ]
+  },
+  {
+    "collectionName": "usage_logs",
+    "description": "使用日志表",
+    "fields": [
+      {
+        "name": "_id",
+        "type": "string",
+        "description": "日志ID"
+      },
+      {
+        "name": "userId",
+        "type": "string",
+        "description": "用户ID"
+      },
+      {
+        "name": "action",
+        "type": "string",
+        "description": "操作类型"
+      },
+      {
+        "name": "quotaUsed",
+        "type": "number",
+        "description": "使用的配额"
+      },
+      {
+        "name": "createdAt",
+        "type": "number",
+        "description": "创建时间戳"
+      }
+    ]
+  }
+]

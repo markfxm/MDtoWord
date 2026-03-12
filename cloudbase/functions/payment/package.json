@@ -1,0 +1,11 @@
+{
+  "name": "payment",
+  "version": "1.0.0",
+  "description": "支付处理云函数",
+  "main": "index.js",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^2.8.0",
+    "wechatpay-node-v3": "^3.0.0",
+    "alipay-sdk": "^3.4.0"
+  }
+}

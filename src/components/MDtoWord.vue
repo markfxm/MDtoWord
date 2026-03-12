@@ -27,6 +27,9 @@
           <span v-else class="spinner"></span>
           {{ isDownloading ? '正在处理...' : '下载 Word' }}
         </button>
+        <div class="user-menu-wrapper">
+          <UserMenu ref="userMenuRef" />
+        </div>
       </div>
     </header>
 
@@ -87,6 +90,8 @@ import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
 import html2canvas from 'html2canvas';
 import * as pdfjsLib from 'pdfjs-dist';
+import UserMenu from './UserMenu.vue';
+import { onUnmounted } from 'vue';
 
 // 设置 PDF.js Worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -101,6 +106,7 @@ const isOptimizePdf = ref(true);
 const isDownloading = ref(false);
 const isReadingPdf = ref(false);
 const fileInput = ref(null);
+const userMenuRef = ref(null);
 
 // 初始占位文本
 const markdownContent = ref(`# 操作说明
@@ -341,6 +347,15 @@ const previewHtml = computed(() => {
 const downloadWord = async () => {
   if (!markdownContent.value.trim()) {
     alert("请输入或粘贴一些 Markdown 内容！");
+    return;
+  }
+
+  // 检查用户配额
+  const quotaCheck = await userMenuRef.value?.checkQuotaAndDecrease();
+  if (!quotaCheck.canUse) {
+    if (quotaCheck.reason === 'quota_exceeded') {
+      alert("您的免费使用次数已用完，请开通会员继续使用！");
+    }
     return;
   }
 
@@ -716,6 +731,11 @@ const handlePdfUpload = async (event) => {
   display: flex;
   align-items: center;
   gap: 1.5rem;
+}
+
+.user-menu-wrapper {
+  display: flex;
+  align-items: center;
 }
 
 .compatibility-toggle {
