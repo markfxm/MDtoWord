@@ -44,7 +44,19 @@
             Markdown 输入区
           </div>
           <div class="pane-actions">
-            <button class="action-btn" @click="triggerPdfUpload" :disabled="isReadingPdf">
+            <!-- Upload MD 按钮 -->
+            <button class="action-btn" @click="triggerMdUpload" :disabled="isReadingMd || isReadingPdf">
+              <svg v-if="!isReadingMd" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+              </svg>
+              <span v-else class="spinner mini"></span>
+              {{ isReadingMd ? '读取中...' : '上传 MD' }}
+            </button>
+            <input type="file" ref="mdFileInput" @change="handleMdUpload" accept=".md" style="display: none;">
+
+            <!-- Upload PDF 按钮 -->
+            <button class="action-btn" @click="triggerPdfUpload" :disabled="isReadingMd || isReadingPdf">
               <svg v-if="!isReadingPdf" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
@@ -52,11 +64,13 @@
               <span v-else class="spinner mini"></span>
               {{ isReadingPdf ? '解析中...' : '上传 PDF' }}
             </button>
-            <input type="file" ref="fileInput" @change="handlePdfUpload" accept=".pdf" style="display: none;">
+            <input type="file" ref="fileInput" @change="handleFileChange" accept=".pdf" style="display: none;">
           </div>
         </div>
-        <!-- 使用 v-model 进行数据双向绑定 -->
-        <textarea v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本..."></textarea>
+        <!-- 使用 v-model 进行数据双向绑定，并添加拖拽支持 -->
+        <textarea v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本，或拖入文件..."
+          :class="{ 'dragging': isDragging }" @dragover.prevent="handleDragOver" @dragleave.prevent="handleDragLeave"
+          @drop.prevent="handleDrop"></textarea>
       </div>
 
       <!-- 预览区 -->
@@ -83,10 +97,35 @@ import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import katex from 'katex';
 import 'katex/dist/katex.min.css'; // 必须引入 KaTeX 的 CSS
+
+// 添加自定义 marked 扩展，解决中文和全角标点环境下 **粗体** 解析失败的问题
+marked.use({
+  extensions: [{
+    name: 'strong',
+    level: 'inline',
+    start(src) { return src.match(/\*\*/)?.index; },
+    tokenizer(src) {
+      const match = /^\*\*([^\s][\s\S]*?[^\s]|[^\s])\*\*(?!\*)/.exec(src);
+      if (match) {
+        return {
+          type: 'strong',
+          raw: match[0],
+          text: match[1],
+          tokens: this.lexer.inlineTokens(match[1])
+        };
+      }
+      return false;
+    }
+  }]
+});
 import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
 import html2canvas from 'html2canvas';
 import * as pdfjsLib from 'pdfjs-dist';
+import * as docx from 'docx';
+import temml from 'temml';
+import { mml2omml } from 'mathml2omml';
+import 'temml/dist/Temml-Latin-Modern.css';
 
 // 设置 PDF.js Worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -100,7 +139,10 @@ const isPreserveBreaks = ref(true);
 const isOptimizePdf = ref(true);
 const isDownloading = ref(false);
 const isReadingPdf = ref(false);
+const isReadingMd = ref(false);
+const isDragging = ref(false);
 const fileInput = ref(null);
+const mdFileInput = ref(null);
 
 // 初始占位文本
 const markdownContent = ref(`# 操作说明
@@ -174,11 +216,13 @@ const optimizePdfContent = (text) => {
       let lastLine = result[lastLineIndex];
       let lastTrimmed = lastLine.trim();
 
-      // 如果当前行不是新段落/列表/标题，且上一行没有结束标点，则合并
+      // 如果当前行不是新段落/列表/标题/表格，且上一行没有结束标点且不是表格，则合并
       const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
-      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed);
+      const isTableLine = trimmed.startsWith('|');
+      const isLastLineTable = lastTrimmed.startsWith('|');
+      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed) || isTableLine;
 
-      if (!isStartOfNewPara && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
+      if (!isStartOfNewPara && !isLastLineTable && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
         const joiner = /[\u4e00-\u9fa5]/.test(lastLine + processedLine) ? "" : " ";
         result[lastLineIndex] = lastLine + joiner + processedLine;
         continue;
@@ -250,9 +294,9 @@ const convertSimpleMathToHtml = (latex) => {
   html = html.replace(/_\{(.+?)\}/g, '<sub>$1</sub>');
   html = html.replace(/\^\{(.+?)\}/g, '<sup>$1</sup>');
 
-  // 支持 _a 和 ^a, 并且扩展到支持小数如 ^0.5 或 ^2.5 (即连续的数字和点), 还有多字母的情况
-  html = html.replace(/_([a-zA-Z]+|[0-9]+(?:\.[0-9]+)?)/g, '<sub>$1</sub>');
-  html = html.replace(/\^([a-zA-Z]+|[0-9]+(?:\.[0-9]+)?)/g, '<sup>$1</sup>');
+  // 支持 _a 和 ^a, 并且扩展到支持带符号数字如 ^-3 或 ^0.5，以及单独的加减号(如 ^-) 
+  html = html.replace(/_([a-zA-Z]+|[-+]?[0-9]+(?:\.[0-9]+)?|[-+])/g, '<sub>$1</sub>');
+  html = html.replace(/\^([a-zA-Z]+|[-+]?[0-9]+(?:\.[0-9]+)?|[-+])/g, '<sup>$1</sup>');
 
   // 4. 数学变量斜体处理 (仅针对单个字母变量，避开 HTML 标签)
   // 统一使用 Times New Roman 会更像公式
@@ -471,8 +515,10 @@ const downloadWord = async () => {
         document.body.removeChild(clone);
       }
     } else {
-      // 标准模式：直接生成（Word 可能回退到文本显示）
-      finalHtmlBody = renderMarkdownWithMath(markdownContent.value, true);
+      // 标准模式：使用 docx.js 生成原生 Office Math 公式的文档
+      await generateDocxWithNativeMath();
+      isDownloading.value = false;
+      return;
     }
 
     // --- 增强：使用 Twemoji 将 Emoji 转换为图片，彻底解决 Word/WPS 中黑白或方块的问题 ---
@@ -591,9 +637,6 @@ const downloadWord = async () => {
               th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
               ul, ol { padding-left: 24px; margin-bottom: 14px; }
               i { font-family: "Times New Roman", serif; font-style: italic; }
-              sub, sup { font-size: 75%; line-height: 0; position: relative; vertical-align: baseline; }
-              sup { top: -0.5em; }
-              sub { bottom: -0.25em; }
           </style>
       </head>
       <body>
@@ -617,24 +660,313 @@ const downloadWord = async () => {
 };
 
 /**
+ * 使用 docx.js 和 temml 生成带原生公式的 Word 文档
+ */
+const generateDocxWithNativeMath = async () => {
+  const {
+    Document, Packer, Paragraph, TextRun, HeadingLevel,
+    Table, TableRow, TableCell, ExternalXml, AlignmentType,
+    BorderStyle, WidthType, VerticalAlign
+  } = docx;
+
+  // 0. PDF 优化预处理
+  let processedContent = isOptimizePdf.value ? optimizePdfContent(markdownContent.value) : markdownContent.value;
+
+  // 0.5 提取块级公式，防止 marked 将其误解析为 HTML 块或复杂的代码块
+  const blockMathMap = new Map();
+  let mathCounter = 0;
+
+  // 匹配孤立在两行之间的 $$ ... $$
+  processedContent = processedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
+    const placeholder = `MTHBLOCK_GEN_${mathCounter}_MTH`;
+    blockMathMap.set(placeholder, mathContent.trim());
+    mathCounter++;
+    // 使用前后空行确保 marked 把它识别成一个独立的段落 (paragraph)
+    return `\n\n${placeholder}\n\n`;
+  });
+
+  // 1. 解析 Markdown 令牌
+  const tokens = marked.lexer(processedContent);
+  const children = [];
+
+  // 定义常用字体
+  const DEFAULT_FONTS = {
+    ascii: "Calibri",
+    eastAsia: "Microsoft YaHei",
+  };
+
+  // 辅助函数：递归处理 inline 令牌（包含粗体、斜体、行内公式、链接等）
+  const processInlineTokens = (inlineTokens, inheritedStyle = {}) => {
+    const runs = [];
+
+    for (const token of inlineTokens) {
+      switch (token.type) {
+        case 'strong':
+          runs.push(...processInlineTokens(token.tokens || [], { ...inheritedStyle, bold: true }));
+          break;
+        case 'em':
+          runs.push(...processInlineTokens(token.tokens || [], { ...inheritedStyle, italics: true }));
+          break;
+        case 'codespan':
+          runs.push(new TextRun({
+            text: token.text,
+            font: "Consolas",
+            shading: { fill: "F3F4F6" },
+            ...inheritedStyle
+          }));
+          break;
+        case 'text':
+        default: {
+          // 处理 text 类型的 token，其中可能包含行内公式 $...$
+          // 因为默认 marked 不会解析 $...$，它们会留在 text 令牌中
+          let text = token.text || '';
+          let lastIdx = 0;
+          const mathRegex = /\$([^$\n]+?)\$/g;
+          let match;
+
+          while ((match = mathRegex.exec(text)) !== null) {
+            if (match.index > lastIdx) {
+              runs.push(new TextRun({ text: text.slice(lastIdx, match.index), font: DEFAULT_FONTS, ...inheritedStyle }));
+            }
+            try {
+              const latex = match[1].trim();
+              const mathml = temml.renderToString(latex, { displayMode: false });
+              const omml = mml2omml(mathml);
+              runs.push(new ExternalXml(omml));
+            } catch (e) {
+              runs.push(new TextRun({ text: match[0], font: DEFAULT_FONTS, ...inheritedStyle }));
+            }
+            lastIdx = mathRegex.lastIndex;
+          }
+          if (lastIdx < text.length) {
+            runs.push(new TextRun({ text: text.slice(lastIdx), font: DEFAULT_FONTS, ...inheritedStyle }));
+          }
+          break;
+        }
+      }
+    }
+    return runs;
+  };
+
+  // 2. 遍历令牌并构建 docx 元素
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'heading': {
+        const level = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
+        HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6][token.depth - 1] || HeadingLevel.HEADING_1;
+        children.push(new Paragraph({
+          children: processInlineTokens(token.tokens || []),
+          heading: level,
+          spacing: { before: 240, after: 120 },
+        }));
+        break;
+      }
+
+      case 'paragraph': {
+        // 如果这个段落仅仅是我们替换的独立块级公式占位符
+        if (blockMathMap.has(token.text.trim())) {
+          const latex = blockMathMap.get(token.text.trim());
+          try {
+            const mathml = temml.renderToString(latex, { displayMode: true });
+            const omml = mml2omml(mathml);
+            children.push(new Paragraph({
+              children: [new ExternalXml(omml)],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 240, after: 240 },
+            }));
+          } catch (e) {
+            children.push(new Paragraph({ text: token.text }));
+          }
+          break;
+        }
+
+        // 默认的段落处理 (处理普通文本和内联公式)
+        // 注意：因为上面已经把块级公式单独提取为段落，这里只会处理普通的包含文本和内联公式的段落
+        children.push(new Paragraph({
+          children: processInlineTokens(token.tokens || []),
+          spacing: { after: 120 },
+        }));
+        break;
+      }
+
+      case 'code': {
+        // 块级公式处理：如果代码块被识别为数学公式（某些解析器会这么做）或者手动匹配
+        if (token.lang === 'math' || token.lang === 'latex') {
+          try {
+            const mathml = temml.renderToString(token.text.trim(), { displayMode: true });
+            const omml = mml2omml(mathml);
+            children.push(new Paragraph({
+              children: [new ExternalXml(omml)],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 240, after: 240 },
+            }));
+          } catch (e) {
+            children.push(new Paragraph({ text: token.text }));
+          }
+        } else {
+          // 普通代码块
+          children.push(new Paragraph({
+            children: [new TextRun({ text: token.text, font: "Consolas" })],
+            shading: { fill: "F3F4F6" },
+            spacing: { before: 120, after: 120 },
+          }));
+        }
+        break;
+      }
+
+      case 'blockquote': {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: token.text, italics: true, color: "666666" })],
+          indent: { left: 720 },
+          spacing: { before: 120, after: 120 },
+        }));
+        break;
+      }
+
+      case 'list': {
+        token.items.forEach(item => {
+          children.push(new Paragraph({
+            children: processInlineTokens(item.tokens || []),
+            bullet: { level: 0 },
+            spacing: { after: 60 },
+          }));
+        });
+        break;
+      }
+
+      case 'table': {
+        const rows = [];
+        // Header
+        rows.push(new TableRow({
+          children: token.header.map(cell => new TableCell({
+            children: [new Paragraph({ text: cell.text, bold: true })],
+            verticalAlign: VerticalAlign.CENTER,
+            shading: { fill: "F9FAFB" }
+          }))
+        }));
+        // Body
+        token.rows.forEach(row => {
+          rows.push(new TableRow({
+            children: row.map(cell => new TableCell({
+              children: [new Paragraph({ text: cell.text })],
+              verticalAlign: VerticalAlign.CENTER,
+            }))
+          }));
+        });
+
+        children.push(new Table({
+          rows,
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          margins: { top: 100, bottom: 100, left: 100, right: 100 }
+        }));
+        break;
+      }
+
+      case 'space':
+        break;
+
+      default: {
+        // 处理未显式匹配的块
+        if (token.text) {
+          children.push(new Paragraph({ text: token.text }));
+        }
+        break;
+      }
+    }
+  }
+
+  // 3. 生成文档
+  const doc = new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // 1 inch
+        }
+      },
+      children: children,
+    }],
+  });
+
+  // 4. 导出
+  const blob = await Packer.toBlob(doc);
+  saveAs(blob, '文档导出.docx');
+};
+
+/**
  * 触发文件选择
  */
 const triggerPdfUpload = () => {
   fileInput.value?.click();
 };
 
+const triggerMdUpload = () => {
+  mdFileInput.value?.click();
+};
+
 /**
- * 处理文件上传
+ * 拖拽相关处理
  */
-const handlePdfUpload = async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
+const handleDragOver = () => {
+  isDragging.value = true;
+};
 
-  if (file.type !== 'application/pdf') {
-    alert('请选择 PDF 文件！');
-    return;
+const handleDragLeave = () => {
+  isDragging.value = false;
+};
+
+const handleDrop = (event) => {
+  isDragging.value = false;
+  const files = event.dataTransfer.files;
+  if (files && files.length > 0) {
+    handleFile(files[0]);
   }
+};
 
+/**
+ * 处理文件上传 (兼容手动选择和拖拽)
+ */
+const handleMdUpload = (event) => {
+  const file = event.target.files[0];
+  if (file) handleFile(file);
+  event.target.value = ''; // 清空以支持重复上传
+};
+
+const handleFile = async (file) => {
+  if (file.name.toLowerCase().endsWith('.pdf')) {
+    await processPdf(file);
+  } else if (file.name.toLowerCase().endsWith('.md')) {
+    await processMd(file);
+  } else {
+    alert('暂不支持该文件格式，请上传 PDF 或 Markdown 文件。');
+  }
+};
+
+/**
+ * 处理 Markdown 文件
+ */
+const processMd = async (file) => {
+  isReadingMd.value = true;
+  try {
+    const text = await file.text();
+    markdownContent.value = text;
+  } catch (error) {
+    console.error('读取 Markdown 出错:', error);
+    alert('读取文件失败，请重试。');
+  } finally {
+    isReadingMd.value = false;
+  }
+};
+
+/**
+ * 处理 PDF 文件 (从原 handlePdfUpload 提取)
+ */
+const handleFileChange = (event) => {
+  const file = event.target.files[0];
+  if (file) handleFile(file);
+  event.target.value = '';
+};
+
+const processPdf = async (file) => {
   isReadingPdf.value = true;
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -659,8 +991,6 @@ const handlePdfUpload = async (event) => {
     }
 
     markdownContent.value = fullText.trim();
-    // 清除文件输入值，以便于再次上传同一文件
-    event.target.value = '';
   } catch (error) {
     console.error('解析 PDF 出错:', error);
     alert('解析 PDF 失败，请确保文件未加密且格式正确。');
@@ -854,7 +1184,7 @@ const handlePdfUpload = async (event) => {
 
 textarea {
   flex: 1;
-  border: none;
+  border: 2px solid transparent;
   padding: 1.25rem;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
   font-size: 14px;
@@ -863,6 +1193,13 @@ textarea {
   outline: none;
   background-color: #ffffff;
   color: #1f2937;
+  transition: all 0.2s;
+}
+
+textarea.dragging {
+  background-color: #f0f7ff;
+  border-color: #3b82f6;
+  border-style: dashed;
 }
 
 .preview {

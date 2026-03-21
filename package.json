@@ -9,13 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "docx": "^9.6.1",
     "file-saver": "^2.0.5",
     "html-docx-js-typescript": "^0.1.5",
     "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "katex": "^0.16.33",
     "marked": "^17.0.3",
+    "mathml2omml": "^0.5.0",
     "pdfjs-dist": "^4.10.38",
+    "temml": "^0.13.2",
     "twemoji": "^14.0.2",
     "vue": "^3.5.25"
   },
