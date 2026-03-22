@@ -7,9 +7,9 @@
         <span class="tagline">粘贴你的文章，一键导出排版完美的 .docx 文档</span>
       </div>
       <div class="header-right">
-        <label class="compatibility-toggle" title="解决 WPS 和旧版 Word 公式乱码问题">
+        <label class="compatibility-toggle" title="导出为图片格式，解决 WPS 和旧版 Word 公式乱码问题">
           <input type="checkbox" v-model="isWpsCompatible">
-          <span>WPS 兼容模式</span>
+          <span>公式转为图片 (增强兼容型)</span>
         </label>
         <label class="compatibility-toggle" title="允许单换行直接转换为换行符（对 PDF 复制很有用）">
           <input type="checkbox" v-model="isPreserveBreaks">
@@ -100,23 +100,42 @@ import 'katex/dist/katex.min.css'; // 必须引入 KaTeX 的 CSS
 
 // 添加自定义 marked 扩展，解决中文和全角标点环境下 **粗体** 解析失败的问题
 marked.use({
-  extensions: [{
-    name: 'strong',
-    level: 'inline',
-    start(src) { return src.match(/\*\*/)?.index; },
-    tokenizer(src) {
-      const match = /^\*\*([^\s][\s\S]*?[^\s]|[^\s])\*\*(?!\*)/.exec(src);
-      if (match) {
-        return {
-          type: 'strong',
-          raw: match[0],
-          text: match[1],
-          tokens: this.lexer.inlineTokens(match[1])
-        };
+  extensions: [
+    {
+      name: 'strong',
+      level: 'inline',
+      start(src) { return src.match(/\*\*/)?.index; },
+      tokenizer(src) {
+        const match = /^\*\*([\s\S]+?)\*\*(?!\*)/.exec(src);
+        if (match) {
+          return {
+            type: 'strong',
+            raw: match[0],
+            text: match[1],
+            tokens: this.lexer.inlineTokens(match[1])
+          };
+        }
+        return false;
       }
-      return false;
+    },
+    {
+      name: 'em',
+      level: 'inline',
+      start(src) { return src.match(/\*(?!\*)/)?.index; },
+      tokenizer(src) {
+        const match = /^\*([^\s\*][\s\S]*?[^\s\*]|[^\s\*])\*(?!\*)/.exec(src);
+        if (match) {
+          return {
+            type: 'em',
+            raw: match[0],
+            text: match[1],
+            tokens: this.lexer.inlineTokens(match[1])
+          };
+        }
+        return false;
+      }
     }
-  }]
+  ]
 });
 import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
@@ -134,7 +153,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 // 界面状态
-const isWpsCompatible = ref(true);
+const isWpsCompatible = ref(false); // 默认使用标准模式（原生公式），现代 WPS/Word 均支持良好
 const isPreserveBreaks = ref(true);
 const isOptimizePdf = ref(true);
 const isDownloading = ref(false);
@@ -220,9 +239,11 @@ const optimizePdfContent = (text) => {
       const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
       const isTableLine = trimmed.startsWith('|');
       const isLastLineTable = lastTrimmed.startsWith('|');
-      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed) || isTableLine;
+      // 这里的正则必须与 generateDocxWithNativeMath/renderMarkdownWithMath 中的占位符格式严格一致
+      const isMathBlock = /@@@MATHBLOCK|@@@MATHINLINE/.test(trimmed) || /@@@MATHBLOCK|@@@MATHINLINE/.test(lastTrimmed);
+      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed) || isTableLine || /@@@MATHBLOCK/.test(trimmed);
 
-      if (!isStartOfNewPara && !isLastLineTable && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
+      if (!isStartOfNewPara && !isLastLineTable && !isMathBlock && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
         const joiner = /[\u4e00-\u9fa5]/.test(lastLine + processedLine) ? "" : " ";
         result[lastLineIndex] = lastLine + joiner + processedLine;
         continue;
@@ -264,6 +285,22 @@ const LATEX_SYMBOL_MAP = {
   '\\emptyset': '∅', '\\angle': '∠', '\\triangle': '△', '\\hbar': 'ℏ', '\\ell': 'ℓ', '\\Re': 'ℜ', '\\Im': 'ℑ',
   '\\neg': '¬', '\\land': '∧', '\\lor': '∨'
 };
+
+/**
+ * 清理 LaTeX 公式中的 Markdown 过度转义
+ * 解决上传 MD 文件时，编辑器自动给 _, =, - 等符号加反斜杠的问题
+ */
+const cleanupMathContent = (latex) => {
+  if (!latex) return '';
+  return latex
+    // 1. 处理常见的 Markdown 转义：这些在 LaTeX 中通常是无效或非预期的符号
+    // 包括 =, _, -, *, +, ., !, [, ], (, )
+    .replace(/\\([=+\-\[\]\(\)\.\!\*\_])/g, '$1')
+    // 2. 处理可能被多重转义的反斜杠 (例如 \\int -> \int)
+    // 针对反斜杠接字母的情况，统一缩减为单反斜杠
+    .replace(/\\\\([a-zA-Z])/g, '\\$1');
+};
+
 
 /**
  * 将简单的 LaTeX 公式转换为带样式的 HTML 文本，用于支持 Word 中的字符级选中
@@ -331,27 +368,27 @@ const isSimpleMath = (latex) => {
 const renderMarkdownWithMath = (text, isForWord = false) => {
   if (!text) return '';
 
-  // 0. PDF 优化预处理
-  let processedText = isOptimizePdf.value ? optimizePdfContent(text) : text;
-
   let mathTokens = {};
   let tokenIndex = 0;
 
   // 1. 提取块级公式
-  processedText = processedText.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-    let token = `MTHBLOCK${tokenIndex}MTH`;
-    mathTokens[token] = { text: mathContent, display: true };
+  let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
+    let token = `@@@MATHBLOCK${tokenIndex}@@@`;
+    mathTokens[token] = { text: cleanupMathContent(mathContent), display: true };
     tokenIndex++;
-    return `\n${token}\n`;
+    return `\n\n${token}\n\n`;
   });
 
-  // 2. 提取行内公式
+  // 1.5 提取行内公式
   processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, mathContent) => {
-    let token = `MTHINLINE${tokenIndex}MTH`;
-    mathTokens[token] = { text: mathContent, display: false };
+    let token = `@@@MATHINLINE${tokenIndex}@@@`;
+    mathTokens[token] = { text: cleanupMathContent(mathContent), display: false };
     tokenIndex++;
     return token;
   });
+
+  // 2. PDF 优化预处理
+  processedText = isOptimizePdf.value ? optimizePdfContent(processedText) : processedText;
 
   // 3. 基础 markdown 解析
   let html = marked.parse(processedText, { breaks: isPreserveBreaks.value });
@@ -360,17 +397,15 @@ const renderMarkdownWithMath = (text, isForWord = false) => {
   for (let token in mathTokens) {
     let mathInfo = mathTokens[token];
     try {
-      let renderedMath = katex.renderToString(mathInfo.text.trim(), {
+      const renderedMath = katex.renderToString(mathInfo.text.trim(), {
         displayMode: mathInfo.display,
         output: isForWord ? 'mathml' : 'htmlAndMathml',
         throwOnError: false
       });
-
-      // 注：Word 的 docx 转换库通常不直接支持复杂的 MathML。
-      html = html.replace(token, renderedMath);
+      html = html.split(token).join(renderedMath);
     } catch (e) {
-      // 如果公式有语法错误，原样输出避免页面崩溃
-      html = html.replace(token, mathInfo.text);
+      console.error('KaTeX error:', e);
+      html = html.split(token).join(`<span style="color:red">[公式错误: ${mathInfo.text}]</span>`);
     }
   }
   return html;
@@ -669,21 +704,21 @@ const generateDocxWithNativeMath = async () => {
     BorderStyle, WidthType, VerticalAlign
   } = docx;
 
-  // 0. PDF 优化预处理
-  let processedContent = isOptimizePdf.value ? optimizePdfContent(markdownContent.value) : markdownContent.value;
-
-  // 0.5 提取块级公式，防止 marked 将其误解析为 HTML 块或复杂的代码块
+  // 0. 提取块级公式 (在 PDF 优化之前，防止 $$ 被拆散或合并)
   const blockMathMap = new Map();
   let mathCounter = 0;
+  let preProcessedContent = markdownContent.value;
 
-  // 匹配孤立在两行之间的 $$ ... $$
-  processedContent = processedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-    const placeholder = `MTHBLOCK_GEN_${mathCounter}_MTH`;
-    blockMathMap.set(placeholder, mathContent.trim());
+  preProcessedContent = preProcessedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
+    const placeholder = `@@@MATHBLOCKGEN${mathCounter}@@@`;
+    blockMathMap.set(placeholder, cleanupMathContent(mathContent.trim()));
     mathCounter++;
-    // 使用前后空行确保 marked 把它识别成一个独立的段落 (paragraph)
     return `\n\n${placeholder}\n\n`;
   });
+
+  // 0.5 PDF 优化预处理 (仅对剩余文本生效)
+  let processedContent = isOptimizePdf.value ? optimizePdfContent(preProcessedContent) : preProcessedContent;
+
 
   // 1. 解析 Markdown 令牌
   const tokens = marked.lexer(processedContent);
@@ -717,27 +752,48 @@ const generateDocxWithNativeMath = async () => {
           break;
         case 'text':
         default: {
-          // 处理 text 类型的 token，其中可能包含行内公式 $...$
-          // 因为默认 marked 不会解析 $...$，它们会留在 text 令牌中
+          // 处理 text 类型的 token，其中可能包含行内公式 $...$ 或被合并的块公式占位符 MTHBLOCK_GEN_x_MTH
           let text = token.text || '';
           let lastIdx = 0;
-          const mathRegex = /\$([^$\n]+?)\$/g;
+          // 综合匹配：行内公式 $...$ 或 块级公式占位符 @@@MATHBLOCKGEN\d+@@@
+          const combinedRegex = /(\$[^$\n]+?\$)|(@@@MATHBLOCKGEN\d+@@@)/g;
           let match;
 
-          while ((match = mathRegex.exec(text)) !== null) {
+          while ((match = combinedRegex.exec(text)) !== null) {
+            // 处理匹配项之前的纯文本
             if (match.index > lastIdx) {
               runs.push(new TextRun({ text: text.slice(lastIdx, match.index), font: DEFAULT_FONTS, ...inheritedStyle }));
             }
-            try {
-              const latex = match[1].trim();
-              const mathml = temml.renderToString(latex, { displayMode: false });
-              const omml = mml2omml(mathml);
-              runs.push(new ExternalXml(omml));
-            } catch (e) {
-              runs.push(new TextRun({ text: match[0], font: DEFAULT_FONTS, ...inheritedStyle }));
+
+            const matchStr = match[0];
+            if (matchStr.startsWith('$')) {
+              // 处理行内公式 $...$
+              try {
+                const latex = cleanupMathContent(matchStr.slice(1, -1).trim());
+                const mathml = temml.renderToString(latex, { displayMode: false });
+                const omml = mml2omml(mathml);
+                runs.push(new ExternalXml(omml));
+              } catch (e) {
+                runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
+              }
+            } else {
+              // 处理块级公式占位符 MTHBLOCK_GEN_x_MTH
+              try {
+                const latex = blockMathMap.get(matchStr);
+                if (latex) {
+                  const mathml = temml.renderToString(latex, { displayMode: true });
+                  const omml = mml2omml(mathml);
+                  runs.push(new ExternalXml(omml));
+                } else {
+                  runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
+                }
+              } catch (e) {
+                runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
+              }
             }
-            lastIdx = mathRegex.lastIndex;
+            lastIdx = combinedRegex.lastIndex;
           }
+          // 处理最后一截纯文本
           if (lastIdx < text.length) {
             runs.push(new TextRun({ text: text.slice(lastIdx), font: DEFAULT_FONTS, ...inheritedStyle }));
           }
