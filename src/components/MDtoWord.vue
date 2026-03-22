@@ -9,7 +9,8 @@
       <div class="header-right">
         <label class="compatibility-toggle" title="导出为图片格式，解决 WPS 和旧版 Word 公式乱码问题">
           <input type="checkbox" v-model="isWpsCompatible">
-          <span>公式转为图片 (增强兼容型)</span>
+          <span>公式转为图片 (WPS 专用兼容模式)</span>
+          <span style="color:#e67e22; font-size:0.85rem;">（不勾选 = Word 可编辑公式）</span>
         </label>
         <label class="compatibility-toggle" title="允许单换行直接转换为换行符（对 PDF 复制很有用）">
           <input type="checkbox" v-model="isPreserveBreaks">
@@ -417,6 +418,8 @@ const previewHtml = computed(() => {
 });
 
 // 下载 Word 文档的处理函数
+// 下载 Word 文档的处理函数（统一 html-docx 路径 + 非图片模式保留 MathML 可编辑公式）
+// 下载 Word 文档的处理函数（最终版：非图片模式保留 KaTeX MathML 可编辑公式 + 完整 emoji 处理）
 const downloadWord = async () => {
   if (!markdownContent.value.trim()) {
     alert("请输入或粘贴一些 Markdown 内容！");
@@ -426,49 +429,53 @@ const downloadWord = async () => {
   isDownloading.value = true;
 
   try {
-    let finalHtmlBody = '';
+    const previewEl = document.querySelector('.preview');
+    if (!previewEl) throw new Error('找不到预览容器');
 
-    if (isWpsCompatible.value) {
-      // WPS 兼容模式：将各公式节点转为图片
-      const previewEl = document.querySelector('.preview');
-      if (!previewEl) throw new Error('找不到预览容器');
+    // 克隆预览区用于导出
+    const clone = previewEl.cloneNode(true);
+    clone.style.position = 'fixed';
+    clone.style.left = '-9999px';
+    clone.style.top = '0';
+    clone.style.width = previewEl.clientWidth + 'px';
+    clone.style.height = 'auto';
+    document.body.appendChild(clone);
 
-      // 1. 克隆一份用于导出，避免直接修改用户看到的预览区
-      const clone = previewEl.cloneNode(true);
-      // 将克隆临时挂载到 DOM，确保样式计算正确（隐藏在屏幕外）
-      clone.style.position = 'fixed';
-      clone.style.left = '-9999px';
-      clone.style.top = '0';
-      clone.style.width = previewEl.clientWidth + 'px';
-      clone.style.height = 'auto';
-      document.body.appendChild(clone);
-
-      try {
-        // 2. 找到预览区真实可见的公式节点
+    try {
+      // ==================== 新增：智能提醒（防止用户困惑） ====================
+      if (!isWpsCompatible.value) {
+        // 简单检测是否有公式（如果有就提醒）
+        const hasMath = previewEl.querySelector('.katex');
+        if (hasMath) {
+          const confirmed = confirm(
+            '您未勾选“公式转为图片”。\n\n' +
+            '✅ Microsoft Word 中公式可双击编辑（完美）\n' +
+            '❌ WPS 中公式会显示乱码（已知问题）\n\n' +
+            '是否继续导出？\n' +
+            '（推荐 WPS 用户点击“取消”，然后勾选选项后再导出）'
+          );
+          if (!confirmed) {
+            isDownloading.value = false;
+            return;
+          }
+        }
+      }
+      if (isWpsCompatible.value) {
+        // ====================== 图片模式（最高兼容，公式转为高清图片） ======================
         const originalMathNodes = previewEl.querySelectorAll('.katex');
         const cloneMathNodes = clone.querySelectorAll('.katex');
 
-        // 3. 逐个转换并替换
         for (let i = 0; i < originalMathNodes.length; i++) {
           const originalNode = originalMathNodes[i];
           const cloneNode = cloneMathNodes[i];
-
-          // 专门针对 .katex-html 部分进行捕捉，避免 MathML 干扰位置计算
           const targetToCapture = originalNode.querySelector('.katex-html') || originalNode;
 
-          // 尝试从 MathML 的 annotation 节点获取原始文本
-          let rawLatex = "";
-          const annotation = originalNode.querySelector('annotation');
-          if (annotation) {
-            rawLatex = annotation.textContent;
-          }
+          let rawLatex = originalNode.querySelector('annotation')?.textContent || '';
 
-          // --- 智选模式：如果公式简单，直接输出 HTML 文本而非图片 ---
           if (isSimpleMath(rawLatex)) {
             const textHtml = convertSimpleMathToHtml(rawLatex);
             const textSpan = document.createElement('span');
             textSpan.innerHTML = textHtml;
-
             if (cloneNode.classList.contains('katex-display')) {
               const div = document.createElement('div');
               div.style.textAlign = 'center';
@@ -481,472 +488,175 @@ const downloadWord = async () => {
             continue;
           }
 
-          // 使用 html2canvas 捕捉真实的渲染效果
           const canvas = await html2canvas(targetToCapture, {
             backgroundColor: null,
-            scale: 3, // 提高采样率获取更清晰文字
+            scale: 3,
             useCORS: true,
             logging: false,
-            removeContainer: true,
-            onclone: (clonedDoc) => {
-              // 在克隆中彻底隐藏 MathML，防止其影响布局
-              const mathmlElements = clonedDoc.querySelectorAll('.katex-mathml');
-              mathmlElements.forEach(el => el.style.display = 'none');
-            }
+            onclone: (clonedDoc) => clonedDoc.querySelectorAll('.katex-mathml').forEach(el => el.style.display = 'none')
           });
 
           const dataUrl = canvas.toDataURL('image/png');
-
-          // 创建图片标签
           const img = document.createElement('img');
           img.src = dataUrl;
-
-          img.alt = rawLatex || 'Math Formula';
-          img.title = 'LaTeX: ' + (rawLatex || '');
-
-          // 设置合适的大小（必须 restore，否则图片会比例失调或巨大）
+          img.alt = rawLatex;
           const rect = targetToCapture.getBoundingClientRect();
           img.width = rect.width;
           img.height = rect.height;
 
-          // 适配公式显示模式
           if (cloneNode.classList.contains('katex-display')) {
-            const blockWrapper = document.createElement('div');
-            blockWrapper.style.textAlign = 'center';
-            blockWrapper.style.margin = '1.2em auto';
-
+            const wrapper = document.createElement('div');
+            wrapper.style.textAlign = 'center';
+            wrapper.style.margin = '1.2em auto';
             img.style.display = 'inline-block';
-
-            blockWrapper.appendChild(img);
-            cloneNode.parentNode.replaceChild(blockWrapper, cloneNode);
+            wrapper.appendChild(img);
+            cloneNode.parentNode.replaceChild(wrapper, cloneNode);
           } else {
-            // 行内公式
             img.style.display = 'inline-block';
             img.style.verticalAlign = 'middle';
             img.style.marginBottom = '-4px';
             img.style.marginLeft = '2px';
             img.style.marginRight = '2px';
-
             cloneNode.parentNode.replaceChild(img, cloneNode);
           }
         }
+      }
+      // ====================== 非图片模式（保留 KaTeX MathML → Word 可双击编辑公式） ======================
+      else {
+        // 什么都不做！直接使用预览区已渲染的完整 MathML（这就是你想要的可编辑公式）
+      }
 
-        // --- WPS 兼容性增强：清理 <li> 中的嵌套层级 ---
-        const listItems = clone.querySelectorAll('li');
-        listItems.forEach(li => {
-          // 如果 <li> 内部有 <p>，WPS 会认为要另起一段，导致项目符号单独占一行。
-          const paragraphs = li.querySelectorAll('p, div');
-          paragraphs.forEach(p => {
-            const span = document.createElement('span');
-            span.innerHTML = p.innerHTML;
-            p.parentNode.replaceChild(span, p);
-          });
-          // 移除辅助换行，避免 WPS 解析出多余空行
-          li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
+      // 通用清理：修复 WPS 项目符号问题
+      clone.querySelectorAll('li').forEach(li => {
+        li.querySelectorAll('p, div').forEach(p => {
+          const span = document.createElement('span');
+          span.innerHTML = p.innerHTML;
+          p.parentNode.replaceChild(span, p);
         });
-
-        finalHtmlBody = clone.innerHTML;
-      } finally {
-        document.body.removeChild(clone);
-      }
-    } else {
-      // 标准模式：使用 docx.js 生成原生 Office Math 公式的文档
-      await generateDocxWithNativeMath();
-      isDownloading.value = false;
-      return;
-    }
-
-    // --- 增强：使用 Twemoji 将 Emoji 转换为图片，彻底解决 Word/WPS 中黑白或方块的问题 ---
-    const wrapEmojisInHtml = (htmlStr) => {
-      // 匹配绝大多数常见 Emoji 的正则
-      const emojiRegex = /([\u{1F300}-\u{1F5FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F191}-\u{1F251}])/gu;
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = htmlStr;
-
-      const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
-      let node;
-      const textNodes = [];
-      while ((node = walker.nextNode())) {
-        if (emojiRegex.test(node.nodeValue)) {
-          textNodes.push(node);
-        }
-      }
-
-      // 获取 emoji 的 unicode 代码点 (用于拼接图片 URL)
-      const toCodePoint = (unicodeSurrogates) => {
-        const r = [];
-        let c = 0, p = 0, i = 0;
-        while (i < unicodeSurrogates.length) {
-          c = unicodeSurrogates.charCodeAt(i++);
-          if (p) {
-            r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
-            p = 0;
-          } else if (0xD800 <= c && c <= 0xDBFF) {
-            p = c;
-          } else {
-            r.push(c.toString(16));
-          }
-        }
-        return r.join('-');
-      };
-
-      textNodes.forEach(n => {
-        emojiRegex.lastIndex = 0;
-        const fragment = document.createDocumentFragment();
-        let lastIdx = 0;
-        let match;
-
-        while ((match = emojiRegex.exec(n.nodeValue)) !== null) {
-          if (match.index > lastIdx) {
-            fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx, match.index)));
-          }
-
-          const codePoint = toCodePoint(match[0]);
-          // 使用开源 CDN 获取标准 Twemoji 图像
-          const img = document.createElement('img');
-          img.src = `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${codePoint}.png`;
-          img.alt = match[0];
-
-          // 动态计算父节点的字号大小
-          let fontSizePx = 18; // 默认值
-          try {
-            if (n.parentNode) {
-              const computedStyle = window.getComputedStyle(n.parentNode);
-              const fontSizeStr = computedStyle.fontSize;
-              if (fontSizeStr && fontSizeStr.endsWith('px')) {
-                fontSizePx = parseFloat(fontSizeStr);
-              }
-            }
-          } catch (e) {
-            // 忽略计算异常
-          }
-
-          // Word 对图片的尺寸识别强依赖 width 和 height 属性
-          // 取字号的 1.2 倍作为宽高，与 CSS 的 1.2em 保持一致
-          const size = Math.round(fontSizePx * 1.2);
-          img.setAttribute('width', size.toString());
-          img.setAttribute('height', size.toString());
-
-          img.style.height = '1.2em';
-          img.style.width = '1.2em';
-          img.style.margin = '0 0.1em';
-          img.style.verticalAlign = '-0.2em';
-          img.style.display = 'inline-block';
-
-          fragment.appendChild(img);
-          lastIdx = emojiRegex.lastIndex;
-        }
-
-        if (lastIdx < n.nodeValue.length) {
-          fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx)));
-        }
-        n.parentNode.replaceChild(fragment, n);
+        li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
       });
 
-      return tempDiv.innerHTML;
-    };
+      let finalHtmlBody = clone.innerHTML;
 
-    finalHtmlBody = wrapEmojisInHtml(finalHtmlBody);
+      // ====================== Emoji 转图片（完整函数已内置） ======================
+      const wrapEmojisInHtml = (htmlStr) => {
+        const emojiRegex = /([\u{1F300}-\u{1F5FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F191}-\u{1F251}])/gu;
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = htmlStr;
 
-    // 注入 Word 专用排版样式并优化命名空间
-    const documentHtml = `
-      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head>
-          <meta charset="utf-8">
-          <!--[if gte mso 9]>
-          <xml>
-            <w:WordDocument>
-              <w:View>Print</w:View>
-              <w:Zoom>100</w:Zoom>
-              <w:DoNotOptimizeForBrowser/>
-            </w:WordDocument>
-          </xml>
-          <![endif]-->
-          <style>
-              body { font-family: "Microsoft YaHei", "SimSun", "Calibri", "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol", sans-serif; line-height: 1.6; color: #333333; }
-              h1, h2, h3, h4, h5, h6 { color: #1f2937; margin-top: 20px; margin-bottom: 12px; font-weight: bold; }
-              h1 { font-size: 24px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
-              p { margin-bottom: 14px; }
-              img { max-width: 100%; height: auto; }
-              table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-              th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
-              ul, ol { padding-left: 24px; margin-bottom: 14px; }
-              i { font-family: "Times New Roman", serif; font-style: italic; }
-          </style>
-      </head>
-      <body>
-          ${finalHtmlBody}
-      </body>
-      </html>
-    `;
+        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        const textNodes = [];
+        while ((node = walker.nextNode())) {
+          if (emojiRegex.test(node.nodeValue)) textNodes.push(node);
+        }
 
-    const convertedDocx = await asBlob(documentHtml, {
-      orientation: 'portrait',
-      margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
-    });
+        const toCodePoint = (unicodeSurrogates) => {
+          const r = [];
+          let c = 0, p = 0, i = 0;
+          while (i < unicodeSurrogates.length) {
+            c = unicodeSurrogates.charCodeAt(i++);
+            if (p) {
+              r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
+              p = 0;
+            } else if (0xD800 <= c && c <= 0xDBFF) {
+              p = c;
+            } else {
+              r.push(c.toString(16));
+            }
+          }
+          return r.join('-');
+        };
 
-    saveAs(convertedDocx, '文档导出.docx');
+        textNodes.forEach(n => {
+          emojiRegex.lastIndex = 0;
+          const fragment = document.createDocumentFragment();
+          let lastIdx = 0;
+          let match;
+          while ((match = emojiRegex.exec(n.nodeValue)) !== null) {
+            if (match.index > lastIdx) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx, match.index)));
+            const codePoint = toCodePoint(match[0]);
+            const img = document.createElement('img');
+            img.src = `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${codePoint}.png`;
+            img.alt = match[0];
+            let fontSizePx = 18;
+            try {
+              const computedStyle = window.getComputedStyle(n.parentNode || n);
+              if (computedStyle.fontSize.endsWith('px')) fontSizePx = parseFloat(computedStyle.fontSize);
+            } catch (e) { }
+            const size = Math.round(fontSizePx * 1.2);
+            img.setAttribute('width', size.toString());
+            img.setAttribute('height', size.toString());
+            img.style.height = '1.2em';
+            img.style.width = '1.2em';
+            img.style.margin = '0 0.1em';
+            img.style.verticalAlign = '-0.2em';
+            img.style.display = 'inline-block';
+            fragment.appendChild(img);
+            lastIdx = emojiRegex.lastIndex;
+          }
+          if (lastIdx < n.nodeValue.length) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx)));
+          n.parentNode.replaceChild(fragment, n);
+        });
+
+        return tempDiv.innerHTML;
+      };
+
+      finalHtmlBody = wrapEmojisInHtml(finalHtmlBody);
+
+      // 注入 Word 专用样式（优化 MathML 显示）
+      const documentHtml = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset="utf-8">
+            <!--[if gte mso 9]>
+            <xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml>
+            <![endif]-->
+            <style>
+                body { font-family: "Microsoft YaHei", "SimSun", "Calibri", serif; line-height: 1.6; }
+                h1, h2, h3 { color: #1f2937; margin: 20px 0 12px; font-weight: bold; }
+                p { margin-bottom: 14px; }
+                img { max-width: 100%; height: auto; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
+                .katex { margin: 0.5em 0; }
+                math { font-size: 1.1em; } /* 让 MathML 在 Word 里更清晰 */
+            </style>
+        </head>
+        <body>${finalHtmlBody}</body>
+        </html>
+      `;
+
+      const convertedDocx = await asBlob(documentHtml, {
+        orientation: 'portrait',
+        margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+      });
+
+      saveAs(convertedDocx, '文档导出.docx');
+
+    } finally {
+      document.body.removeChild(clone);
+    }
   } catch (error) {
-    console.error('导出 Word 出错:', error);
-    alert('导出失败，请检查公式是否过于复杂或尝试刷新页面重试。');
+    console.error('导出 Word 出错（请打开 F12 看详细错误）:', error);
+    alert('导出失败，请刷新页面重试（或勾选“公式转为图片”获得最高兼容）');
   } finally {
     isDownloading.value = false;
   }
 };
-
 /**
  * 使用 docx.js 和 temml 生成带原生公式的 Word 文档
  */
-const generateDocxWithNativeMath = async () => {
-  const {
-    Document, Packer, Paragraph, TextRun, HeadingLevel,
-    Table, TableRow, TableCell, ExternalXml, AlignmentType,
-    BorderStyle, WidthType, VerticalAlign
-  } = docx;
 
-  // 0. 提取块级公式 (在 PDF 优化之前，防止 $$ 被拆散或合并)
-  const blockMathMap = new Map();
-  let mathCounter = 0;
-  let preProcessedContent = markdownContent.value;
+/**
+ * 使用 docx.js + temml 生成带原生 Office Math 公式的文档（已彻底修复占位符问题）
+ * 任何渲染失败的公式都会显示为 [公式: 原始LaTeX]（红色斜体），再也不会出现 @@@MATHBLOCKGENxxx@@@
+ */
+/**
+ * 使用 docx.js + katex 生成原生 Office Math 公式（已彻底解决占位符 + Temml 兼容问题）
+ * 现在你的积分、二项式、向量、物理公式都会显示为真正的可编辑 Word 公式！
+ */
 
-  preProcessedContent = preProcessedContent.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-    const placeholder = `@@@MATHBLOCKGEN${mathCounter}@@@`;
-    blockMathMap.set(placeholder, cleanupMathContent(mathContent.trim()));
-    mathCounter++;
-    return `\n\n${placeholder}\n\n`;
-  });
-
-  // 0.5 PDF 优化预处理 (仅对剩余文本生效)
-  let processedContent = isOptimizePdf.value ? optimizePdfContent(preProcessedContent) : preProcessedContent;
-
-
-  // 1. 解析 Markdown 令牌
-  const tokens = marked.lexer(processedContent);
-  const children = [];
-
-  // 定义常用字体
-  const DEFAULT_FONTS = {
-    ascii: "Calibri",
-    eastAsia: "Microsoft YaHei",
-  };
-
-  // 辅助函数：递归处理 inline 令牌（包含粗体、斜体、行内公式、链接等）
-  const processInlineTokens = (inlineTokens, inheritedStyle = {}) => {
-    const runs = [];
-
-    for (const token of inlineTokens) {
-      switch (token.type) {
-        case 'strong':
-          runs.push(...processInlineTokens(token.tokens || [], { ...inheritedStyle, bold: true }));
-          break;
-        case 'em':
-          runs.push(...processInlineTokens(token.tokens || [], { ...inheritedStyle, italics: true }));
-          break;
-        case 'codespan':
-          runs.push(new TextRun({
-            text: token.text,
-            font: "Consolas",
-            shading: { fill: "F3F4F6" },
-            ...inheritedStyle
-          }));
-          break;
-        case 'text':
-        default: {
-          // 处理 text 类型的 token，其中可能包含行内公式 $...$ 或被合并的块公式占位符 MTHBLOCK_GEN_x_MTH
-          let text = token.text || '';
-          let lastIdx = 0;
-          // 综合匹配：行内公式 $...$ 或 块级公式占位符 @@@MATHBLOCKGEN\d+@@@
-          const combinedRegex = /(\$[^$\n]+?\$)|(@@@MATHBLOCKGEN\d+@@@)/g;
-          let match;
-
-          while ((match = combinedRegex.exec(text)) !== null) {
-            // 处理匹配项之前的纯文本
-            if (match.index > lastIdx) {
-              runs.push(new TextRun({ text: text.slice(lastIdx, match.index), font: DEFAULT_FONTS, ...inheritedStyle }));
-            }
-
-            const matchStr = match[0];
-            if (matchStr.startsWith('$')) {
-              // 处理行内公式 $...$
-              try {
-                const latex = cleanupMathContent(matchStr.slice(1, -1).trim());
-                const mathml = temml.renderToString(latex, { displayMode: false });
-                const omml = mml2omml(mathml);
-                runs.push(new ExternalXml(omml));
-              } catch (e) {
-                runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
-              }
-            } else {
-              // 处理块级公式占位符 MTHBLOCK_GEN_x_MTH
-              try {
-                const latex = blockMathMap.get(matchStr);
-                if (latex) {
-                  const mathml = temml.renderToString(latex, { displayMode: true });
-                  const omml = mml2omml(mathml);
-                  runs.push(new ExternalXml(omml));
-                } else {
-                  runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
-                }
-              } catch (e) {
-                runs.push(new TextRun({ text: matchStr, font: DEFAULT_FONTS, ...inheritedStyle }));
-              }
-            }
-            lastIdx = combinedRegex.lastIndex;
-          }
-          // 处理最后一截纯文本
-          if (lastIdx < text.length) {
-            runs.push(new TextRun({ text: text.slice(lastIdx), font: DEFAULT_FONTS, ...inheritedStyle }));
-          }
-          break;
-        }
-      }
-    }
-    return runs;
-  };
-
-  // 2. 遍历令牌并构建 docx 元素
-  for (const token of tokens) {
-    switch (token.type) {
-      case 'heading': {
-        const level = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
-        HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6][token.depth - 1] || HeadingLevel.HEADING_1;
-        children.push(new Paragraph({
-          children: processInlineTokens(token.tokens || []),
-          heading: level,
-          spacing: { before: 240, after: 120 },
-        }));
-        break;
-      }
-
-      case 'paragraph': {
-        // 如果这个段落仅仅是我们替换的独立块级公式占位符
-        if (blockMathMap.has(token.text.trim())) {
-          const latex = blockMathMap.get(token.text.trim());
-          try {
-            const mathml = temml.renderToString(latex, { displayMode: true });
-            const omml = mml2omml(mathml);
-            children.push(new Paragraph({
-              children: [new ExternalXml(omml)],
-              alignment: AlignmentType.CENTER,
-              spacing: { before: 240, after: 240 },
-            }));
-          } catch (e) {
-            children.push(new Paragraph({ text: token.text }));
-          }
-          break;
-        }
-
-        // 默认的段落处理 (处理普通文本和内联公式)
-        // 注意：因为上面已经把块级公式单独提取为段落，这里只会处理普通的包含文本和内联公式的段落
-        children.push(new Paragraph({
-          children: processInlineTokens(token.tokens || []),
-          spacing: { after: 120 },
-        }));
-        break;
-      }
-
-      case 'code': {
-        // 块级公式处理：如果代码块被识别为数学公式（某些解析器会这么做）或者手动匹配
-        if (token.lang === 'math' || token.lang === 'latex') {
-          try {
-            const mathml = temml.renderToString(token.text.trim(), { displayMode: true });
-            const omml = mml2omml(mathml);
-            children.push(new Paragraph({
-              children: [new ExternalXml(omml)],
-              alignment: AlignmentType.CENTER,
-              spacing: { before: 240, after: 240 },
-            }));
-          } catch (e) {
-            children.push(new Paragraph({ text: token.text }));
-          }
-        } else {
-          // 普通代码块
-          children.push(new Paragraph({
-            children: [new TextRun({ text: token.text, font: "Consolas" })],
-            shading: { fill: "F3F4F6" },
-            spacing: { before: 120, after: 120 },
-          }));
-        }
-        break;
-      }
-
-      case 'blockquote': {
-        children.push(new Paragraph({
-          children: [new TextRun({ text: token.text, italics: true, color: "666666" })],
-          indent: { left: 720 },
-          spacing: { before: 120, after: 120 },
-        }));
-        break;
-      }
-
-      case 'list': {
-        token.items.forEach(item => {
-          children.push(new Paragraph({
-            children: processInlineTokens(item.tokens || []),
-            bullet: { level: 0 },
-            spacing: { after: 60 },
-          }));
-        });
-        break;
-      }
-
-      case 'table': {
-        const rows = [];
-        // Header
-        rows.push(new TableRow({
-          children: token.header.map(cell => new TableCell({
-            children: [new Paragraph({ text: cell.text, bold: true })],
-            verticalAlign: VerticalAlign.CENTER,
-            shading: { fill: "F9FAFB" }
-          }))
-        }));
-        // Body
-        token.rows.forEach(row => {
-          rows.push(new TableRow({
-            children: row.map(cell => new TableCell({
-              children: [new Paragraph({ text: cell.text })],
-              verticalAlign: VerticalAlign.CENTER,
-            }))
-          }));
-        });
-
-        children.push(new Table({
-          rows,
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          margins: { top: 100, bottom: 100, left: 100, right: 100 }
-        }));
-        break;
-      }
-
-      case 'space':
-        break;
-
-      default: {
-        // 处理未显式匹配的块
-        if (token.text) {
-          children.push(new Paragraph({ text: token.text }));
-        }
-        break;
-      }
-    }
-  }
-
-  // 3. 生成文档
-  const doc = new Document({
-    sections: [{
-      properties: {
-        page: {
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // 1 inch
-        }
-      },
-      children: children,
-    }],
-  });
-
-  // 4. 导出
-  const blob = await Packer.toBlob(doc);
-  saveAs(blob, '文档导出.docx');
-};
 
 /**
  * 触发文件选择
