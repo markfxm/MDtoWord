@@ -236,15 +236,16 @@ const optimizePdfContent = (text) => {
       let lastLine = result[lastLineIndex];
       let lastTrimmed = lastLine.trim();
 
-      // 如果当前行不是新段落/列表/标题/表格，且上一行没有结束标点且不是表格，则合并
+      // 如果当前行不是新段落/列表/标题/表格，且上一行没有结束标点且不是表格，且上一行不是标题，则合并
       const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
       const isTableLine = trimmed.startsWith('|');
       const isLastLineTable = lastTrimmed.startsWith('|');
       // 这里的正则必须与 generateDocxWithNativeMath/renderMarkdownWithMath 中的占位符格式严格一致
       const isMathBlock = /@@@MATHBLOCK|@@@MATHINLINE/.test(trimmed) || /@@@MATHBLOCK|@@@MATHINLINE/.test(lastTrimmed);
       const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed) || isTableLine || /@@@MATHBLOCK/.test(trimmed);
+      const isLastLineHeading = lastTrimmed.startsWith('#');
 
-      if (!isStartOfNewPara && !isLastLineTable && !isMathBlock && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
+      if (!isStartOfNewPara && !isLastLineTable && !isMathBlock && !isLastLineHeading && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
         const joiner = /[\u4e00-\u9fa5]/.test(lastLine + processedLine) ? "" : " ";
         result[lastLineIndex] = lastLine + joiner + processedLine;
         continue;
