@@ -69,9 +69,9 @@
           </div>
         </div>
         <!-- 使用 v-model 进行数据双向绑定，并添加拖拽支持 -->
-        <textarea v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本，或拖入文件..."
+        <textarea ref="textareaRef" v-model="markdownContent" placeholder="在此输入或粘贴 Markdown 文本，或拖入文件..."
           :class="{ 'dragging': isDragging }" @dragover.prevent="handleDragOver" @dragleave.prevent="handleDragLeave"
-          @drop.prevent="handleDrop"></textarea>
+          @drop.prevent="handleDrop" @mouseenter="activePane = 'textarea'" @scroll="handleTextareaScroll"></textarea>
       </div>
 
       <!-- 预览区 -->
@@ -87,7 +87,7 @@
           实时预览
         </div>
         <!-- 使用 v-html 渲染计算属性生成的安全 HTML -->
-        <div class="preview" v-html="previewHtml"></div>
+        <div class="preview" v-html="previewHtml" @mouseenter="activePane = 'preview'" @scroll="handlePreviewScroll" @mousemove="handlePreviewMouseMove" @mouseleave="handlePreviewMouseLeave" ref="previewRef"></div>
       </div>
     </main>
   </div>
@@ -95,57 +95,9 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import { marked } from 'marked';
-import katex from 'katex';
-import 'katex/dist/katex.min.css'; // 必须引入 KaTeX 的 CSS
-
-// 添加自定义 marked 扩展，解决中文和全角标点环境下 **粗体** 解析失败的问题
-marked.use({
-  extensions: [
-    {
-      name: 'strong',
-      level: 'inline',
-      start(src) { return src.match(/\*\*/)?.index; },
-      tokenizer(src) {
-        const match = /^\*\*([\s\S]+?)\*\*(?!\*)/.exec(src);
-        if (match) {
-          return {
-            type: 'strong',
-            raw: match[0],
-            text: match[1],
-            tokens: this.lexer.inlineTokens(match[1])
-          };
-        }
-        return false;
-      }
-    },
-    {
-      name: 'em',
-      level: 'inline',
-      start(src) { return src.match(/\*(?!\*)/)?.index; },
-      tokenizer(src) {
-        const match = /^\*([^\s\*][\s\S]*?[^\s\*]|[^\s\*])\*(?!\*)/.exec(src);
-        if (match) {
-          return {
-            type: 'em',
-            raw: match[0],
-            text: match[1],
-            tokens: this.lexer.inlineTokens(match[1])
-          };
-        }
-        return false;
-      }
-    }
-  ]
-});
-import { asBlob } from 'html-docx-js-typescript';
-import { saveAs } from 'file-saver';
-import html2canvas from 'html2canvas';
 import * as pdfjsLib from 'pdfjs-dist';
-import * as docx from 'docx';
-import temml from 'temml';
-import { mml2omml } from 'mathml2omml';
-import 'temml/dist/Temml-Latin-Modern.css';
+import { renderMarkdownWithMath } from '../utils/markdownUtils.js';
+import { downloadWord as exportWordUtility } from '../utils/exportWord.js';
 
 // 设置 PDF.js Worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -163,6 +115,88 @@ const isReadingMd = ref(false);
 const isDragging = ref(false);
 const fileInput = ref(null);
 const mdFileInput = ref(null);
+const textareaRef = ref(null);
+const previewRef = ref(null);
+const hoveredElement = ref(null);
+const activePane = ref('');
+const isScrolling = ref(false);
+let scrollTimeout = null;
+
+const handleTextareaScroll = () => {
+  if (activePane.value !== 'textarea') return;
+  
+  isScrolling.value = true;
+  clearTimeout(scrollTimeout);
+  scrollTimeout = setTimeout(() => { isScrolling.value = false; }, 100);
+
+  const textarea = textareaRef.value;
+  const preview = previewRef.value;
+  if (!textarea || !preview) return;
+
+  const maxScrollLeft = textarea.scrollHeight - textarea.clientHeight;
+  const maxScrollRight = preview.scrollHeight - preview.clientHeight;
+  if (maxScrollLeft <= 0 || maxScrollRight <= 0) return;
+
+  const percentage = textarea.scrollTop / maxScrollLeft;
+  // 使用无动画直接赋值保证跟手顺滑度
+  preview.scrollTop = percentage * maxScrollRight;
+};
+
+const handlePreviewScroll = () => {
+  if (activePane.value !== 'preview') return;
+  
+  isScrolling.value = true;
+  clearTimeout(scrollTimeout);
+  scrollTimeout = setTimeout(() => { isScrolling.value = false; }, 100);
+
+  const textarea = textareaRef.value;
+  const preview = previewRef.value;
+  if (!textarea || !preview) return;
+
+  const maxScrollLeft = textarea.scrollHeight - textarea.clientHeight;
+  const maxScrollRight = preview.scrollHeight - preview.clientHeight;
+  if (maxScrollLeft <= 0 || maxScrollRight <= 0) return;
+
+  const percentage = preview.scrollTop / maxScrollRight;
+  textarea.scrollTop = percentage * maxScrollLeft;
+};
+
+const handlePreviewMouseMove = (e) => {
+  // 当正处于剧烈滚动时，暂停鼠标移动带来的强制高亮
+  if (isScrolling.value) return;
+
+  // 仅查找我们精确切分的单句（.hover-target）或天然不可切分的完整块（代码、表格、独立公式）
+  const target = e.target.closest('.hover-target') || e.target.closest('pre, table, .katex-display');
+  
+  if (target && previewRef.value && previewRef.value.contains(target) && target !== previewRef.value) {
+    if (hoveredElement.value !== target) {
+      if (hoveredElement.value) {
+        hoveredElement.value.style.backgroundColor = '';
+        hoveredElement.value.style.transition = '';
+      }
+      hoveredElement.value = target;
+      
+      // 黄色高亮显示
+      target.style.backgroundColor = 'rgba(255, 215, 0, 0.4)'; 
+      target.style.transition = 'background-color 0.2s';
+      target.style.borderRadius = '4px';
+    }
+  } else {
+    clearHighlight();
+  }
+};
+
+const handlePreviewMouseLeave = () => {
+  clearHighlight();
+};
+
+const clearHighlight = () => {
+  if (hoveredElement.value) {
+    hoveredElement.value.style.backgroundColor = '';
+    hoveredElement.value.style.transition = '';
+    hoveredElement.value = null;
+  }
+};
 
 // 初始占位文本
 const markdownContent = ref(`# 操作说明
@@ -173,491 +207,26 @@ const markdownContent = ref(`# 操作说明
 
 （您可以全选删除这段文字后开始使用）`);
 
-/**
- * PDF 粘贴内容预处理：修复丢失的列表符号和缩进
- */
-const optimizePdfContent = (text) => {
-  if (!text) return '';
-
-  let lines = text.split('\n');
-  let result = [];
-  let pendingMarker = null;
-
-  const pdfBulletRegex = /^[•●○▪▫](?:\s|$)/;
-  const numberedListRegex = /^\d+[\.、]\s*/;
-  const mdListRegex = /^[*+-]\s+/;
-
-  for (let i = 0; i < lines.length; i++) {
-    let rawLine = lines[i];
-    let trimmed = rawLine.trim();
-
-    if (trimmed === "") {
-      // 如果正在等待列表内容的文字，跳过空行
-      if (pendingMarker) continue;
-      result.push("");
-      continue;
-    }
-
-    let processedLine = trimmed;
-    let currentLineMarker = null;
-
-    // 1. 识别列表标记
-    if (pdfBulletRegex.test(trimmed)) {
-      currentLineMarker = "* ";
-      processedLine = trimmed.replace(pdfBulletRegex, "").trim();
-    } else if (numberedListRegex.test(trimmed)) {
-      const match = trimmed.match(numberedListRegex);
-      const numPart = match[0].match(/\d+/)[0];
-      currentLineMarker = `${numPart}. `;
-      processedLine = trimmed.replace(numberedListRegex, "").trim();
-    } else if (mdListRegex.test(trimmed)) {
-      const match = trimmed.match(mdListRegex);
-      currentLineMarker = match[0];
-      processedLine = trimmed.replace(mdListRegex, "").trim();
-    }
-
-    // 2. 处理标记与文字分离的情况 (Dangling Marker)
-    if (currentLineMarker) {
-      if (processedLine === "") {
-        pendingMarker = currentLineMarker;
-        continue;
-      } else {
-        processedLine = currentLineMarker + processedLine;
-        pendingMarker = null;
-      }
-    } else if (pendingMarker) {
-      processedLine = pendingMarker + processedLine;
-      pendingMarker = null;
-    }
-
-    // 3. 智能合行逻辑 (加强版)
-    if (result.length > 0) {
-      let lastLineIndex = result.length - 1;
-      let lastLine = result[lastLineIndex];
-      let lastTrimmed = lastLine.trim();
-
-      // 如果当前行不是新段落/列表/标题/表格，且上一行没有结束标点且不是表格，且上一行不是标题，则合并
-      const lineEnders = /[。！？\.!\?;；\uff1a:]$/;
-      const isTableLine = trimmed.startsWith('|');
-      const isLastLineTable = lastTrimmed.startsWith('|');
-      // 这里的正则必须与 generateDocxWithNativeMath/renderMarkdownWithMath 中的占位符格式严格一致
-      const isMathBlock = /@@@MATHBLOCK|@@@MATHINLINE/.test(trimmed) || /@@@MATHBLOCK|@@@MATHINLINE/.test(lastTrimmed);
-      const isStartOfNewPara = currentLineMarker || /^[#\s]/.test(trimmed) || isTableLine || /@@@MATHBLOCK/.test(trimmed);
-      const isLastLineHeading = lastTrimmed.startsWith('#');
-
-      if (!isStartOfNewPara && !isLastLineTable && !isMathBlock && !isLastLineHeading && lastTrimmed !== "" && !lineEnders.test(lastTrimmed)) {
-        const joiner = /[\u4e00-\u9fa5]/.test(lastLine + processedLine) ? "" : " ";
-        result[lastLineIndex] = lastLine + joiner + processedLine;
-        continue;
-      }
-    }
-
-    result.push(processedLine);
-  }
-
-  return result.join('\n');
-};
-
-// 统一维护一个极其全面的 LaTeX 常用数学符号到 Unicode 的映射字典
-// 包含绝大部分无需排版、可直接作为纯文本输出的数学符号
-const LATEX_SYMBOL_MAP = {
-  // 希腊字母 (小写)
-  '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ', '\\epsilon': 'ε', '\\varepsilon': 'ε',
-  '\\zeta': 'ζ', '\\eta': 'η', '\\theta': 'θ', '\\vartheta': 'ϑ', '\\iota': 'ι', '\\kappa': 'κ',
-  '\\lambda': 'λ', '\\mu': 'μ', '\\nu': 'ν', '\\xi': 'ξ', '\\pi': 'π', '\\varpi': 'ϖ',
-  '\\rho': 'ρ', '\\varrho': 'ϱ', '\\sigma': 'σ', '\\varsigma': 'ς', '\\tau': 'τ', '\\upsilon': 'υ',
-  '\\phi': 'φ', '\\varphi': 'ϕ', '\\chi': 'χ', '\\psi': 'ψ', '\\omega': 'ω',
-  // 希腊字母 (大写)
-  '\\Gamma': 'Γ', '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Xi': 'Ξ', '\\Pi': 'Π',
-  '\\Sigma': 'Σ', '\\Upsilon': 'Υ', '\\Phi': 'Φ', '\\Psi': 'Ψ', '\\Omega': 'Ω',
-  // 关系运算符
-  '\\le': '≤', '\\leq': '≤', '\\ge': '≥', '\\geq': '≥', '\\neq': '≠', '\\sim': '~', '\\approx': '≈',
-  '\\simeq': '≃', '\\equiv': '≡', '\\propto': '∝', '\\prec': '≺', '\\succ': '≻',
-  '\\subset': '⊂', '\\supset': '⊃', '\\subseteq': '⊆', '\\supseteq': '⊇', '\\in': '∈', '\\notin': '∉', '\\ni': '∋',
-  '\\models': '⊨', '\\perp': '⊥', '\\mid': '∣', '\\parallel': '∥',
-  // 二元运算符
-  '\\pm': '±', '\\mp': '∓', '\\times': '×', '\\div': '÷', '\\cdot': '·', '\\ast': '∗', '\\star': '⋆',
-  '\\circ': '°', '\\bullet': '•', '\\oplus': '⊕', '\\ominus': '⊖', '\\otimes': '⊗', '\\oslash': '⊘',
-  '\\odot': '⊙', '\\cap': '∩', '\\cup': '∪', '\\vee': '∨', '\\wedge': '∧', '\\setminus': '∖',
-  // 箭头
-  '\\leftarrow': '←', '\\rightarrow': '→', '\\uparrow': '↑', '\\downarrow': '↓', '\\leftrightarrow': '↔',
-  '\\Leftarrow': '⇐', '\\Rightarrow': '⇒', '\\Uparrow': '⇑', '\\Downarrow': '⇓', '\\Leftrightarrow': '⇔',
-  // 杂项与逻辑符号
-  '\\infty': '∞', '\\partial': '∂', '\\nabla': '∇', '\\forall': '∀', '\\exists': '∃', '\\nexists': '∄',
-  '\\emptyset': '∅', '\\angle': '∠', '\\triangle': '△', '\\hbar': 'ℏ', '\\ell': 'ℓ', '\\Re': 'ℜ', '\\Im': 'ℑ',
-  '\\neg': '¬', '\\land': '∧', '\\lor': '∨'
-};
-
-/**
- * 清理 LaTeX 公式中的 Markdown 过度转义
- * 解决上传 MD 文件时，编辑器自动给 _, =, - 等符号加反斜杠的问题
- */
-const cleanupMathContent = (latex) => {
-  if (!latex) return '';
-  return latex
-    // 1. 处理常见的 Markdown 转义：这些在 LaTeX 中通常是无效或非预期的符号
-    // 包括 =, _, -, *, +, ., !, [, ], (, )
-    .replace(/\\([=+\-\[\]\(\)\.\!\*\_])/g, '$1')
-    // 2. 处理可能被多重转义的反斜杠 (例如 \\int -> \int)
-    // 针对反斜杠接字母的情况，统一缩减为单反斜杠
-    .replace(/\\\\([a-zA-Z])/g, '\\$1');
-};
-
-
-/**
- * 将简单的 LaTeX 公式转换为带样式的 HTML 文本，用于支持 Word 中的字符级选中
- */
-const convertSimpleMathToHtml = (latex) => {
-  if (!latex) return '';
-  let html = latex.trim();
-
-  // 1. 符号映射转换 (将 LaTeX 常用数学符号转为 Unicode)
-  for (const [key, val] of Object.entries(LATEX_SYMBOL_MAP)) {
-    // 改进正则：确保匹配反斜杠开始，且后续不接字母（除非是完全匹配）
-    const escapedKey = key.replace(/\\/g, '\\\\');
-    // 如果后面紧跟 YS 这种字母，只要 key 匹配完了，就应该替换 (例如 \sigmaYS -> σYS)
-    const regex = new RegExp(escapedKey + '(?![a-zA-Z])|' + escapedKey, 'g');
-    html = html.replace(regex, val);
-  }
-
-  // 1.5 处理根号和特殊符号
-  html = html.replace(/\\sqrt\{(.+?)\}/g, '√$1');
-  html = html.replace(/\\sqrt\s*([a-zA-Z0-9])/g, '√$1');
-  html = html.replace(/\\%/g, '%');
-
-  // 2. 基础清理
-  html = html.replace(/\\text\{(.+?)\}/g, '$1');
-
-  // 3. 处理上下标
-  // 支持 _{...} 和 ^{...}
-  html = html.replace(/_\{(.+?)\}/g, '<sub>$1</sub>');
-  html = html.replace(/\^\{(.+?)\}/g, '<sup>$1</sup>');
-
-  // 支持 _a 和 ^a, 并且扩展到支持带符号数字如 ^-3 或 ^0.5，以及单独的加减号(如 ^-) 
-  html = html.replace(/_([a-zA-Z]+|[-+]?[0-9]+(?:\.[0-9]+)?|[-+])/g, '<sub>$1</sub>');
-  html = html.replace(/\^([a-zA-Z]+|[-+]?[0-9]+(?:\.[0-9]+)?|[-+])/g, '<sup>$1</sup>');
-
-  // 4. 数学变量斜体处理 (仅针对单个字母变量，避开 HTML 标签)
-  // 统一使用 Times New Roman 会更像公式
-  return `<span style="font-family: 'Times New Roman', serif;">${html.replace(/(?<!<[^>]*)\b([a-zA-Z])\b(?![^<]*>)/g, '<i>$1</i>')}</span>`;
-};
-
-/**
- * 判断公式是否足够简单可以转为 HTML 文本
- */
-const isSimpleMath = (latex) => {
-  if (!latex) return false;
-  // 排除复杂结构：分式、矩阵、求和、积分、大型括号
-  const complexPatterns = /\\frac|\\sum|\\int|\\begin|\\matrix|\\over|\\left|\\right|\\mathcal|\\mathbb|\\Large|\\small/;
-  if (complexPatterns.test(latex)) return false;
-
-  // 动态生成允许的命令列表：所有在 LATEX_SYMBOL_MAP 里的命令 + 特殊处理命令
-  const allowedCmds = [...Object.keys(LATEX_SYMBOL_MAP), '\\text', '\\sqrt', '\\%'];
-
-  const cmds = latex.match(/\\[a-zA-Z]+/g) || [];
-  for (const cmd of cmds) {
-    if (!allowedCmds.includes(cmd)) return false;
-  }
-
-  return latex.length < 80; // 适当放宽长度
-};
-
-/**
- * 核心转换函数
- * @param {string} text - 输入的 Markdown 文本
- * @param {boolean} isForWord - 是否为导出 Word (Word 需要 mathml 格式)
- */
-const renderMarkdownWithMath = (text, isForWord = false) => {
-  if (!text) return '';
-
-  let mathTokens = {};
-  let tokenIndex = 0;
-
-  // 1. 提取块级公式
-  let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-    let token = `@@@MATHBLOCK${tokenIndex}@@@`;
-    mathTokens[token] = { text: cleanupMathContent(mathContent), display: true };
-    tokenIndex++;
-    return `\n\n${token}\n\n`;
-  });
-
-  // 1.5 提取行内公式
-  processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, mathContent) => {
-    let token = `@@@MATHINLINE${tokenIndex}@@@`;
-    mathTokens[token] = { text: cleanupMathContent(mathContent), display: false };
-    tokenIndex++;
-    return token;
-  });
-
-  // 2. PDF 优化预处理
-  processedText = isOptimizePdf.value ? optimizePdfContent(processedText) : processedText;
-
-  // 3. 基础 markdown 解析
-  let html = marked.parse(processedText, { breaks: isPreserveBreaks.value });
-
-  // 4. 填补渲染后的公式
-  for (let token in mathTokens) {
-    let mathInfo = mathTokens[token];
-    try {
-      const renderedMath = katex.renderToString(mathInfo.text.trim(), {
-        displayMode: mathInfo.display,
-        output: isForWord ? 'mathml' : 'htmlAndMathml',
-        throwOnError: false
-      });
-      html = html.split(token).join(renderedMath);
-    } catch (e) {
-      console.error('KaTeX error:', e);
-      html = html.split(token).join(`<span style="color:red">[公式错误: ${mathInfo.text}]</span>`);
-    }
-  }
-  return html;
-};
 
 // 计算属性：当 markdownContent 改变时，自动重新计算并更新预览
 const previewHtml = computed(() => {
-  return renderMarkdownWithMath(markdownContent.value, false);
+  return renderMarkdownWithMath(markdownContent.value, { 
+    isForWord: false,
+    isOptimizePdf: isOptimizePdf.value,
+    isPreserveBreaks: isPreserveBreaks.value
+  });
 });
 
 // 下载 Word 文档的处理函数
-// 下载 Word 文档的处理函数（统一 html-docx 路径 + 非图片模式保留 MathML 可编辑公式）
-// 下载 Word 文档的处理函数（最终版：非图片模式保留 KaTeX MathML 可编辑公式 + 完整 emoji 处理）
 const downloadWord = async () => {
-  if (!markdownContent.value.trim()) {
-    alert("请输入或粘贴一些 Markdown 内容！");
-    return;
-  }
-
-  isDownloading.value = true;
-
-  try {
-    const previewEl = document.querySelector('.preview');
-    if (!previewEl) throw new Error('找不到预览容器');
-
-    // 克隆预览区用于导出
-    const clone = previewEl.cloneNode(true);
-    clone.style.position = 'fixed';
-    clone.style.left = '-9999px';
-    clone.style.top = '0';
-    clone.style.width = previewEl.clientWidth + 'px';
-    clone.style.height = 'auto';
-    document.body.appendChild(clone);
-
-    try {
-      // ==================== 新增：智能提醒（防止用户困惑） ====================
-      if (!isWpsCompatible.value) {
-        // 简单检测是否有公式（如果有就提醒）
-        const hasMath = previewEl.querySelector('.katex');
-        if (hasMath) {
-          const confirmed = confirm(
-            '您未勾选“公式转为图片”。\n\n' +
-            '✅ Microsoft Word 中公式可双击编辑（完美）\n' +
-            '❌ WPS 中公式会显示乱码（已知问题）\n\n' +
-            '是否继续导出？\n' +
-            '（推荐 WPS 用户点击“取消”，然后勾选选项后再导出）'
-          );
-          if (!confirmed) {
-            isDownloading.value = false;
-            return;
-          }
-        }
-      }
-      if (isWpsCompatible.value) {
-        // ====================== 图片模式（最高兼容，公式转为高清图片） ======================
-        const originalMathNodes = previewEl.querySelectorAll('.katex');
-        const cloneMathNodes = clone.querySelectorAll('.katex');
-
-        for (let i = 0; i < originalMathNodes.length; i++) {
-          const originalNode = originalMathNodes[i];
-          const cloneNode = cloneMathNodes[i];
-          const targetToCapture = originalNode.querySelector('.katex-html') || originalNode;
-
-          let rawLatex = originalNode.querySelector('annotation')?.textContent || '';
-
-          if (isSimpleMath(rawLatex)) {
-            const textHtml = convertSimpleMathToHtml(rawLatex);
-            const textSpan = document.createElement('span');
-            textSpan.innerHTML = textHtml;
-            if (cloneNode.classList.contains('katex-display')) {
-              const div = document.createElement('div');
-              div.style.textAlign = 'center';
-              div.style.margin = '1em 0';
-              div.appendChild(textSpan);
-              cloneNode.parentNode.replaceChild(div, cloneNode);
-            } else {
-              cloneNode.parentNode.replaceChild(textSpan, cloneNode);
-            }
-            continue;
-          }
-
-          const canvas = await html2canvas(targetToCapture, {
-            backgroundColor: null,
-            scale: 3,
-            useCORS: true,
-            logging: false,
-            onclone: (clonedDoc) => clonedDoc.querySelectorAll('.katex-mathml').forEach(el => el.style.display = 'none')
-          });
-
-          const dataUrl = canvas.toDataURL('image/png');
-          const img = document.createElement('img');
-          img.src = dataUrl;
-          img.alt = rawLatex;
-          const rect = targetToCapture.getBoundingClientRect();
-          img.width = rect.width;
-          img.height = rect.height;
-
-          if (cloneNode.classList.contains('katex-display')) {
-            const wrapper = document.createElement('div');
-            wrapper.style.textAlign = 'center';
-            wrapper.style.margin = '1.2em auto';
-            img.style.display = 'inline-block';
-            wrapper.appendChild(img);
-            cloneNode.parentNode.replaceChild(wrapper, cloneNode);
-          } else {
-            img.style.display = 'inline-block';
-            img.style.verticalAlign = 'middle';
-            img.style.marginBottom = '-4px';
-            img.style.marginLeft = '2px';
-            img.style.marginRight = '2px';
-            cloneNode.parentNode.replaceChild(img, cloneNode);
-          }
-        }
-      }
-      // ====================== 非图片模式（保留 KaTeX MathML → Word 可双击编辑公式） ======================
-      else {
-        // 什么都不做！直接使用预览区已渲染的完整 MathML（这就是你想要的可编辑公式）
-      }
-
-      // 通用清理：修复 WPS 项目符号问题
-      clone.querySelectorAll('li').forEach(li => {
-        li.querySelectorAll('p, div').forEach(p => {
-          const span = document.createElement('span');
-          span.innerHTML = p.innerHTML;
-          p.parentNode.replaceChild(span, p);
-        });
-        li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
-      });
-
-      let finalHtmlBody = clone.innerHTML;
-
-      // ====================== Emoji 转图片（完整函数已内置） ======================
-      const wrapEmojisInHtml = (htmlStr) => {
-        const emojiRegex = /([\u{1F300}-\u{1F5FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F191}-\u{1F251}])/gu;
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = htmlStr;
-
-        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        const textNodes = [];
-        while ((node = walker.nextNode())) {
-          if (emojiRegex.test(node.nodeValue)) textNodes.push(node);
-        }
-
-        const toCodePoint = (unicodeSurrogates) => {
-          const r = [];
-          let c = 0, p = 0, i = 0;
-          while (i < unicodeSurrogates.length) {
-            c = unicodeSurrogates.charCodeAt(i++);
-            if (p) {
-              r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
-              p = 0;
-            } else if (0xD800 <= c && c <= 0xDBFF) {
-              p = c;
-            } else {
-              r.push(c.toString(16));
-            }
-          }
-          return r.join('-');
-        };
-
-        textNodes.forEach(n => {
-          emojiRegex.lastIndex = 0;
-          const fragment = document.createDocumentFragment();
-          let lastIdx = 0;
-          let match;
-          while ((match = emojiRegex.exec(n.nodeValue)) !== null) {
-            if (match.index > lastIdx) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx, match.index)));
-            const codePoint = toCodePoint(match[0]);
-            const img = document.createElement('img');
-            img.src = `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${codePoint}.png`;
-            img.alt = match[0];
-            let fontSizePx = 18;
-            try {
-              const computedStyle = window.getComputedStyle(n.parentNode || n);
-              if (computedStyle.fontSize.endsWith('px')) fontSizePx = parseFloat(computedStyle.fontSize);
-            } catch (e) { }
-            const size = Math.round(fontSizePx * 1.2);
-            img.setAttribute('width', size.toString());
-            img.setAttribute('height', size.toString());
-            img.style.height = '1.2em';
-            img.style.width = '1.2em';
-            img.style.margin = '0 0.1em';
-            img.style.verticalAlign = '-0.2em';
-            img.style.display = 'inline-block';
-            fragment.appendChild(img);
-            lastIdx = emojiRegex.lastIndex;
-          }
-          if (lastIdx < n.nodeValue.length) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx)));
-          n.parentNode.replaceChild(fragment, n);
-        });
-
-        return tempDiv.innerHTML;
-      };
-
-      finalHtmlBody = wrapEmojisInHtml(finalHtmlBody);
-
-      // 注入 Word 专用样式（优化 MathML 显示）
-      const documentHtml = `
-        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-        <head>
-            <meta charset="utf-8">
-            <!--[if gte mso 9]>
-            <xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml>
-            <![endif]-->
-            <style>
-                body { font-family: "Microsoft YaHei", "SimSun", "Calibri", serif; line-height: 1.6; }
-                h1, h2, h3 { color: #1f2937; margin: 20px 0 12px; font-weight: bold; }
-                p { margin-bottom: 14px; }
-                img { max-width: 100%; height: auto; }
-                table { border-collapse: collapse; width: 100%; }
-                th, td { border: 1px solid #d1d5db; padding: 8px 12px; }
-                .katex { margin: 0.5em 0; }
-                math { font-size: 1.1em; } /* 让 MathML 在 Word 里更清晰 */
-            </style>
-        </head>
-        <body>${finalHtmlBody}</body>
-        </html>
-      `;
-
-      const convertedDocx = await asBlob(documentHtml, {
-        orientation: 'portrait',
-        margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
-      });
-
-      saveAs(convertedDocx, '文档导出.docx');
-
-    } finally {
-      document.body.removeChild(clone);
-    }
-  } catch (error) {
-    console.error('导出 Word 出错（请打开 F12 看详细错误）:', error);
-    alert('导出失败，请刷新页面重试（或勾选“公式转为图片”获得最高兼容）');
-  } finally {
-    isDownloading.value = false;
-  }
+  await exportWordUtility({
+    previewEl: document.querySelector('.preview'),
+    markdownContent: markdownContent.value,
+    isWpsCompatible: isWpsCompatible.value,
+    onDownloadStart: () => { isDownloading.value = true; },
+    onDownloadEnd: () => { isDownloading.value = false; }
+  });
 };
-/**
- * 使用 docx.js 和 temml 生成带原生公式的 Word 文档
- */
-
-/**
- * 使用 docx.js + temml 生成带原生 Office Math 公式的文档（已彻底修复占位符问题）
- * 任何渲染失败的公式都会显示为 [公式: 原始LaTeX]（红色斜体），再也不会出现 @@@MATHBLOCKGENxxx@@@
- */
-/**
- * 使用 docx.js + katex 生成原生 Office Math 公式（已彻底解决占位符 + Temml 兼容问题）
- * 现在你的积分、二项式、向量、物理公式都会显示为真正的可编辑 Word 公式！
- */
-
 
 /**
  * 触发文件选择
