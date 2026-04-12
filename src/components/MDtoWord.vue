@@ -12,22 +12,23 @@
           <span>公式转为图片 (WPS 专用兼容模式)</span>
           <span style="color:#e67e22; font-size:0.85rem;">（不勾选 = Word 可编辑公式）</span>
         </label>
-        <label class="compatibility-toggle" title="允许单换行直接转换为换行符（对 PDF 复制很有用）">
+        <label class="compatibility-toggle" title="允许单换行直接转换为换行符">
           <input type="checkbox" v-model="isPreserveBreaks">
           <span>保留换行</span>
         </label>
-        <label class="compatibility-toggle" title="自动转换 PDF 特殊符号并恢复列表缩进">
-          <input type="checkbox" v-model="isOptimizePdf">
-          <span>PDF 优化</span>
-        </label>
-        <button class="download-btn" @click="downloadWord" :disabled="isDownloading">
-          <svg v-if="!isDownloading" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-          </svg>
-          <span v-else class="spinner"></span>
-          {{ isDownloading ? '正在处理...' : '下载 Word' }}
-        </button>
+        <div class="download-container">
+          <div class="download-hint-text">
+            若导出格式不理想，推荐尝试右下的“复制预览”
+          </div>
+          <button class="download-btn" @click="downloadWord" :disabled="isDownloading">
+            <svg v-if="!isDownloading" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            <span v-else class="spinner"></span>
+            {{ isDownloading ? '正在处理...' : '下载 Word' }}
+          </button>
+        </div>
       </div>
     </header>
 
@@ -46,7 +47,7 @@
           </div>
           <div class="pane-actions">
             <!-- Upload MD 按钮 -->
-            <button class="action-btn" @click="triggerMdUpload" :disabled="isReadingMd || isReadingPdf">
+            <button class="action-btn" @click="triggerMdUpload" :disabled="isReadingMd">
               <svg v-if="!isReadingMd" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
@@ -55,17 +56,6 @@
               {{ isReadingMd ? '读取中...' : '上传 MD' }}
             </button>
             <input type="file" ref="mdFileInput" @change="handleMdUpload" accept=".md" style="display: none;">
-
-            <!-- Upload PDF 按钮 -->
-            <button class="action-btn" @click="triggerPdfUpload" :disabled="isReadingMd || isReadingPdf">
-              <svg v-if="!isReadingPdf" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
-              </svg>
-              <span v-else class="spinner mini"></span>
-              {{ isReadingPdf ? '解析中...' : '上传 PDF' }}
-            </button>
-            <input type="file" ref="fileInput" @change="handleFileChange" accept=".pdf" style="display: none;">
           </div>
         </div>
         <!-- 使用 v-model 进行数据双向绑定，并添加拖拽支持 -->
@@ -77,17 +67,33 @@
       <!-- 预览区 -->
       <div class="pane">
         <div class="pane-title">
-          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z">
-            </path>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z">
-            </path>
-          </svg>
-          实时预览
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z">
+              </path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z">
+              </path>
+            </svg>
+            实时预览
+          </div>
+          <div class="pane-actions">
+            <button class="action-btn" @click="copyPreviewContent" :disabled="isCopied" title="复制预览内容，可直接粘贴到 Word">
+              <svg v-if="!isCopied" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3">
+                </path>
+              </svg>
+              <svg v-else width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+              </svg>
+              {{ isCopied ? '已复制' : '复制预览' }}
+            </button>
+          </div>
         </div>
         <!-- 使用 v-html 渲染计算属性生成的安全 HTML -->
-        <div class="preview" v-html="previewHtml" @mouseenter="activePane = 'preview'" @scroll="handlePreviewScroll" @mousemove="handlePreviewMouseMove" @mouseleave="handlePreviewMouseLeave" ref="previewRef"></div>
+        <div class="preview" v-html="previewHtml" @mouseenter="activePane = 'preview'" @scroll="handlePreviewScroll"
+          @mousemove="handlePreviewMouseMove" @mouseleave="handlePreviewMouseLeave" ref="previewRef"></div>
       </div>
     </main>
   </div>
@@ -95,36 +101,27 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import * as pdfjsLib from 'pdfjs-dist';
 import { renderMarkdownWithMath } from '../utils/markdownUtils.js';
 import { downloadWord as exportWordUtility } from '../utils/exportWord.js';
-
-// 设置 PDF.js Worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString();
 
 // 界面状态
 const isWpsCompatible = ref(false); // 默认使用标准模式（原生公式），现代 WPS/Word 均支持良好
 const isPreserveBreaks = ref(true);
-const isOptimizePdf = ref(true);
 const isDownloading = ref(false);
-const isReadingPdf = ref(false);
 const isReadingMd = ref(false);
 const isDragging = ref(false);
-const fileInput = ref(null);
 const mdFileInput = ref(null);
 const textareaRef = ref(null);
 const previewRef = ref(null);
 const hoveredElement = ref(null);
 const activePane = ref('');
 const isScrolling = ref(false);
+const isCopied = ref(false);
 let scrollTimeout = null;
 
 const handleTextareaScroll = () => {
   if (activePane.value !== 'textarea') return;
-  
+
   isScrolling.value = true;
   clearTimeout(scrollTimeout);
   scrollTimeout = setTimeout(() => { isScrolling.value = false; }, 100);
@@ -144,7 +141,7 @@ const handleTextareaScroll = () => {
 
 const handlePreviewScroll = () => {
   if (activePane.value !== 'preview') return;
-  
+
   isScrolling.value = true;
   clearTimeout(scrollTimeout);
   scrollTimeout = setTimeout(() => { isScrolling.value = false; }, 100);
@@ -167,7 +164,7 @@ const handlePreviewMouseMove = (e) => {
 
   // 仅查找我们精确切分的单句（.hover-target）或天然不可切分的完整块（代码、表格、独立公式）
   const target = e.target.closest('.hover-target') || e.target.closest('pre, table, .katex-display');
-  
+
   if (target && previewRef.value && previewRef.value.contains(target) && target !== previewRef.value) {
     if (hoveredElement.value !== target) {
       if (hoveredElement.value) {
@@ -175,9 +172,9 @@ const handlePreviewMouseMove = (e) => {
         hoveredElement.value.style.transition = '';
       }
       hoveredElement.value = target;
-      
+
       // 黄色高亮显示
-      target.style.backgroundColor = 'rgba(255, 215, 0, 0.4)'; 
+      target.style.backgroundColor = 'rgba(255, 215, 0, 0.4)';
       target.style.transition = 'background-color 0.2s';
       target.style.borderRadius = '4px';
     }
@@ -210,9 +207,8 @@ const markdownContent = ref(`# 操作说明
 
 // 计算属性：当 markdownContent 改变时，自动重新计算并更新预览
 const previewHtml = computed(() => {
-  return renderMarkdownWithMath(markdownContent.value, { 
+  return renderMarkdownWithMath(markdownContent.value, {
     isForWord: false,
-    isOptimizePdf: isOptimizePdf.value,
     isPreserveBreaks: isPreserveBreaks.value
   });
 });
@@ -228,11 +224,46 @@ const downloadWord = async () => {
   });
 };
 
-/**
- * 触发文件选择
- */
-const triggerPdfUpload = () => {
-  fileInput.value?.click();
+const copyPreviewContent = async () => {
+  const previewEl = previewRef.value;
+  if (!previewEl) return;
+
+  try {
+    // 获取 HTML 和纯文本内容
+    // 注意：如果是公式，HTML 会包含 KaTeX 的 DOM 结构，Word 通常能很好地识别
+    const htmlContent = previewEl.innerHTML;
+    const textContent = previewEl.innerText;
+
+    // 使用 Clipboard API 写入富文本
+    const typeHtml = 'text/html';
+    const typeText = 'text/plain';
+    const blobHtml = new Blob([htmlContent], { type: typeHtml });
+    const blobText = new Blob([textContent], { type: typeText });
+
+    const data = [new ClipboardItem({
+      [typeHtml]: blobHtml,
+      [typeText]: blobText
+    })];
+
+    await navigator.clipboard.write(data);
+
+    isCopied.value = true;
+    setTimeout(() => {
+      isCopied.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error('复制失败:', err);
+    // 降级处理：仅尝试复制纯文本
+    try {
+      await navigator.clipboard.writeText(previewEl.innerText);
+      isCopied.value = true;
+      setTimeout(() => {
+        isCopied.value = false;
+      }, 2000);
+    } catch (fallbackErr) {
+      alert('复制失败，请手动选择预览区内容进行复制。');
+    }
+  }
 };
 
 const triggerMdUpload = () => {
@@ -268,12 +299,10 @@ const handleMdUpload = (event) => {
 };
 
 const handleFile = async (file) => {
-  if (file.name.toLowerCase().endsWith('.pdf')) {
-    await processPdf(file);
-  } else if (file.name.toLowerCase().endsWith('.md')) {
+  if (file.name.toLowerCase().endsWith('.md')) {
     await processMd(file);
   } else {
-    alert('暂不支持该文件格式，请上传 PDF 或 Markdown 文件。');
+    alert('暂不支持该文件格式，请上传 Markdown 文件。');
   }
 };
 
@@ -290,48 +319,6 @@ const processMd = async (file) => {
     alert('读取文件失败，请重试。');
   } finally {
     isReadingMd.value = false;
-  }
-};
-
-/**
- * 处理 PDF 文件 (从原 handlePdfUpload 提取)
- */
-const handleFileChange = (event) => {
-  const file = event.target.files[0];
-  if (file) handleFile(file);
-  event.target.value = '';
-};
-
-const processPdf = async (file) => {
-  isReadingPdf.value = true;
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = '';
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-
-      let lastY = -1;
-      let pageText = '';
-
-      for (const item of textContent.items) {
-        if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
-          pageText += '\n';
-        }
-        pageText += item.str;
-        lastY = item.transform[5];
-      }
-      fullText += pageText + '\n\n';
-    }
-
-    markdownContent.value = fullText.trim();
-  } catch (error) {
-    console.error('解析 PDF 出错:', error);
-    alert('解析 PDF 失败，请确保文件未加密且格式正确。');
-  } finally {
-    isReadingPdf.value = false;
   }
 };
 </script>
@@ -414,6 +401,37 @@ const processPdf = async (file) => {
   align-items: center;
   gap: 6px;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+}
+
+.download-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.download-hint-text {
+  font-size: 0.75rem;
+  color: #6b7280;
+  background-color: #fefce8;
+  border: 1px solid #fef08a;
+  padding: 4px 10px;
+  border-radius: 4px;
+  max-width: 180px;
+  line-height: 1.4;
+  text-align: right;
+  position: relative;
+}
+
+.download-hint-text::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px 0 5px 5px;
+  border-style: solid;
+  border-color: transparent transparent transparent #fef08a;
 }
 
 .download-btn:disabled {
@@ -639,5 +657,10 @@ textarea.dragging {
 .preview :deep(img) {
   max-width: 100%;
   box-sizing: content-box;
+}
+
+/* 隐藏预览区的 MathML 冗余文本，防止 Chrome 原生渲染导致重复 */
+.preview :deep(.katex-mathml) {
+  display: none;
 }
 </style>

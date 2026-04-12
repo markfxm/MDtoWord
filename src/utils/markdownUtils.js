@@ -1,7 +1,6 @@
 import { marked } from 'marked';
 import katex from 'katex';
 import { cleanupMathContent } from './mathUtils.js';
-import { optimizePdfContent } from './pdfUtils.js';
 
 // 添加自定义 marked 扩展，解决中文和全角标点环境下 **粗体** 解析失败的问题
 marked.use({
@@ -51,7 +50,7 @@ marked.use({
 export const renderMarkdownWithMath = (text, options = {}) => {
   if (!text) return '';
 
-  const { isForWord = false, isOptimizePdf = true, isPreserveBreaks = true } = options;
+  const { isForWord = false, isPreserveBreaks = true } = options;
 
   let mathTokens = {};
   let tokenIndex = 0;
@@ -72,9 +71,6 @@ export const renderMarkdownWithMath = (text, options = {}) => {
     return token;
   });
 
-  // 2. PDF 优化预处理
-  processedText = isOptimizePdf ? optimizePdfContent(processedText) : processedText;
-
   // 3. 基础 markdown 解析
   let html = marked.parse(processedText, { breaks: isPreserveBreaks });
 
@@ -85,11 +81,11 @@ export const renderMarkdownWithMath = (text, options = {}) => {
     const blocks = tempDiv.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, td');
     blocks.forEach(block => {
       // 跳过包含嵌套列表的容易出错的复杂容器
-      if (block.querySelector('ul, ol')) return; 
-      
+      if (block.querySelector('ul, ol')) return;
+
       let currentFragment = [];
       let fragments = [];
-      
+
       // 首先按照软换行 <br> 将内容划分为“视觉行”
       Array.from(block.childNodes).forEach(node => {
         if (node.nodeName === 'BR') {
