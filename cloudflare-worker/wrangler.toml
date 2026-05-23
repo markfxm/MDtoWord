@@ -1,0 +1,4 @@
+name = "md-word-image-proxy"
+main = "image-proxy.js"
+compatibility_date = "2026-05-23"
+workers_dev = true

@@ -1,12 +1,109 @@
-import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
 import html2canvas from 'html2canvas';
 import { isSimpleMath, convertSimpleMathToHtml } from './mathUtils.js';
+import { asWordCompatibleBlob } from './htmlDocxWord.js';
+
+const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = reject;
+  reader.readAsDataURL(blob);
+});
+
+const isFetchableImageSrc = (src) => {
+  if (!src || src.startsWith('data:')) return false;
+  return /^(https?:|blob:|\/)/i.test(src);
+};
+
+const getImageProxyUrl = (absoluteSrc) => {
+  const configuredProxy = window.MD_TO_WORD_CONFIG?.imageProxyUrl || import.meta.env.VITE_IMAGE_PROXY_URL;
+  const proxyBase = configuredProxy || '/api/image-proxy';
+  const separator = proxyBase.includes('?') ? '&' : '?';
+  return `${proxyBase}${separator}url=${encodeURIComponent(absoluteSrc)}`;
+};
+
+const inferImageMimeType = (src, fallback = 'image/png') => {
+  const cleanSrc = src.split('?')[0].toLowerCase();
+  if (cleanSrc.endsWith('.jpg') || cleanSrc.endsWith('.jpeg')) return 'image/jpeg';
+  if (cleanSrc.endsWith('.gif')) return 'image/gif';
+  if (cleanSrc.endsWith('.webp')) return 'image/webp';
+  if (cleanSrc.endsWith('.svg')) return 'image/svg+xml';
+  if (cleanSrc.endsWith('.bmp')) return 'image/bmp';
+  return fallback;
+};
+
+const normalizeImageBlob = (blob, src, contentType) => {
+  const mimeType = contentType?.split(';')[0] || blob.type;
+  if (mimeType?.startsWith('image/')) {
+    return blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
+  }
+  return new Blob([blob], { type: inferImageMimeType(src) });
+};
+
+const fetchImageBlob = async (absoluteSrc) => {
+  try {
+    const response = await fetch(absoluteSrc);
+    if (!response.ok) throw new Error(`图片下载失败：${response.status}`);
+    return normalizeImageBlob(
+      await response.blob(),
+      absoluteSrc,
+      response.headers.get('content-type')
+    );
+  } catch (directError) {
+    if (!/^https?:\/\//i.test(absoluteSrc)) throw directError;
+
+    const proxyUrl = getImageProxyUrl(absoluteSrc);
+    const proxyResponse = await fetch(proxyUrl);
+    if (!proxyResponse.ok) {
+      throw new Error(`图片代理下载失败：${proxyResponse.status}`);
+    }
+
+    return normalizeImageBlob(
+      await proxyResponse.blob(),
+      absoluteSrc,
+      proxyResponse.headers.get('content-type')
+    );
+  }
+};
+
+const inlineImagesForWord = async (root) => {
+  const images = Array.from(root.querySelectorAll('img'));
+  const failedImages = [];
+
+  await Promise.all(images.map(async (img) => {
+    const src = img.getAttribute('src');
+    if (!isFetchableImageSrc(src)) return;
+
+    try {
+      const absoluteSrc = new URL(src, window.location.href).href;
+      const blob = await fetchImageBlob(absoluteSrc);
+      img.setAttribute('src', await blobToDataUrl(blob));
+      img.removeAttribute('srcset');
+    } catch (error) {
+      console.warn('图片内嵌失败，Word 可能无法显示该图片:', src, error);
+      failedImages.push(src);
+    }
+  }));
+
+  return failedImages;
+};
+
+const getSafeDocxFilename = (documentTitle) => {
+  const fallbackName = '文档导出';
+  const baseName = (documentTitle || fallbackName)
+    .replace(/\.md$/i, '')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .trim();
+
+  return `${baseName || fallbackName}.docx`;
+};
 
 export const downloadWord = async ({
   previewEl,
   markdownContent,
   isWpsCompatible,
+  documentTitle,
   onDownloadStart,
   onDownloadEnd
 }) => {
@@ -121,6 +218,11 @@ export const downloadWord = async ({
         li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
       });
 
+      const failedImages = await inlineImagesForWord(clone);
+      if (failedImages.length > 0) {
+        throw new Error(`有 ${failedImages.length} 张图片无法内嵌。静态部署时需要配置可用的图片代理服务。`);
+      }
+
       let finalHtmlBody = clone.innerHTML;
 
       // ====================== Emoji 转图片（完整函数已内置） ======================
@@ -212,19 +314,19 @@ export const downloadWord = async ({
         </html>
       `;
 
-      const convertedDocx = await asBlob(documentHtml, {
+      const convertedDocx = await asWordCompatibleBlob(documentHtml, {
         orientation: 'portrait',
         margins: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
       });
 
-      saveAs(convertedDocx, '文档导出.docx');
+      saveAs(convertedDocx, getSafeDocxFilename(documentTitle));
 
     } finally {
       document.body.removeChild(clone);
     }
   } catch (error) {
     console.error('导出 Word 出错（请打开 F12 看详细错误）:', error);
-    alert('导出失败，请刷新页面重试（或勾选“公式转为图片”获得最高兼容）');
+    alert(error?.message || '导出失败，请刷新页面重试（或勾选“公式转为图片”获得最高兼容）');
   } finally {
     if (onDownloadEnd) onDownloadEnd();
   }

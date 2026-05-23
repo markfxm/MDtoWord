@@ -117,6 +117,7 @@ const hoveredElement = ref(null);
 const activePane = ref('');
 const isScrolling = ref(false);
 const isCopied = ref(false);
+const documentTitle = ref('文档导出');
 let scrollTimeout = null;
 
 const handleTextareaScroll = () => {
@@ -219,6 +220,7 @@ const downloadWord = async () => {
     previewEl: document.querySelector('.preview'),
     markdownContent: markdownContent.value,
     isWpsCompatible: isWpsCompatible.value,
+    documentTitle: documentTitle.value,
     onDownloadStart: () => { isDownloading.value = true; },
     onDownloadEnd: () => { isDownloading.value = false; }
   });
@@ -314,6 +316,7 @@ const processMd = async (file) => {
   try {
     const text = await file.text();
     markdownContent.value = text;
+    documentTitle.value = file.name.replace(/\.md$/i, '') || '文档导出';
   } catch (error) {
     console.error('读取 Markdown 出错:', error);
     alert('读取文件失败，请重试。');
