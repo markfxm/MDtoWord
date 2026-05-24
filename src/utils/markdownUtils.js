@@ -47,6 +47,20 @@ marked.use({
  * @param {string} text - 输入的 Markdown 文本
  * @param {object} options - 选项配置 { isForWord, isOptimizePdf, isPreserveBreaks }
  */
+const looksLikeLatexBlock = (content) => {
+  return /\\[a-zA-Z]+|[_^{}]/.test(content);
+};
+
+const normalizeBracketMathBlocks = (text) => {
+  return text.replace(
+    /(^|\n)([ \t]*)\\?\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\\?\][ \t]*(?=\n|$)/g,
+    (match, prefix, indent, content) => {
+      if (!looksLikeLatexBlock(content)) return match;
+      return `${prefix}${indent}$$\n${content.trim()}\n${indent}$$`;
+    }
+  );
+};
+
 export const renderMarkdownWithMath = (text, options = {}) => {
   if (!text) return '';
 
@@ -54,9 +68,10 @@ export const renderMarkdownWithMath = (text, options = {}) => {
 
   let mathTokens = {};
   let tokenIndex = 0;
+  const normalizedText = normalizeBracketMathBlocks(text);
 
   // 1. 提取块级公式
-  let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
+  let processedText = normalizedText.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
     let token = `@@@MATHBLOCK${tokenIndex}@@@`;
     mathTokens[token] = { text: cleanupMathContent(mathContent), display: true };
     tokenIndex++;
