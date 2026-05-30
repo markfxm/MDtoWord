@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "npm run build && wrangler dev",
     "ocr:serve": "python -m uvicorn ocr_service.app:app --host 127.0.0.1 --port 8765",
     "ocr:serve:venv": ".\\.venv-ocr\\Scripts\\python.exe -m uvicorn ocr_service.app:app --host 127.0.0.1 --port 8765",
     "ocr:smoke": "python ocr_service/smoke_test.py",
-    "ocr:smoke:venv": ".\\.venv-ocr\\Scripts\\python.exe ocr_service/smoke_test.py"
+    "ocr:smoke:venv": ".\\.venv-ocr\\Scripts\\python.exe ocr_service/smoke_test.py",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "docx": "^9.6.1",
@@ -27,7 +28,9 @@
     "vue": "^3.5.25"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.39.0",
     "@vitejs/plugin-vue": "^6.0.2",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "wrangler": "^4.95.0"
   }
 }

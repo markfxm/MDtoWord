@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 const imageProxyPath = '/api/image-proxy'
 
 const sendImageProxyResponse = async (req, res) => {
@@ -52,7 +54,7 @@ const imageProxyPlugin = () => ({
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), imageProxyPlugin()],
+  plugins: [vue(), imageProxyPlugin(), cloudflare()],
   server: {
     watch: {
       ignored: ['**/.venv-ocr/**'],
