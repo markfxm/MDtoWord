@@ -14,8 +14,9 @@
     - **WPS 兼容模式**：一键将公式转换为高清晰度图片并嵌入 Word。彻底解决在 WPS 或旧版 Word 中打开时公式乱码的问题。
 - **📋 快捷复制预览**：支持一键将预览区的富文本（含公式）直接复制并手动粘贴到 Word，保持高度一致的排版。
 - **📁 多种输入方式**：支持手动粘贴文本、点击按钮上传 `.md` 文件，或直接将文件**拖拽**至输入框。
+- **🖼 本地结构化 OCR**：可上传图片，通过本地 Pix2Text 服务识别正文、公式、表格和图表，识别后仍回填到 Markdown 输入区。
 - **🎨 精美排版**：预设了符合中文阅读习惯的字体及行间距，支持 Emoji 表情转换，导出的文档无需二次调整即可直接使用。
-- **🔒 隐私安全**：所有转换过程均在您的**浏览器本地**完成，您的数据绝不会上传至任何服务器，确保信息绝对私密。
+- **🔒 隐私安全**：Markdown 转 Word 在浏览器本地完成；图片 OCR 走本机 `127.0.0.1` 服务，不会上传到外部服务器。
 
 ---
 
@@ -54,6 +55,15 @@ npm install
 
 # 启动开发服务器
 npm run dev
+
+# 可选：启动本地结构化 OCR 服务
+python -m venv .venv-ocr
+.\.venv-ocr\Scripts\Activate.ps1
+pip install -r .\ocr_service\requirements.txt
+npm run ocr:serve:venv
+
+# 可选：对图片做 OCR smoke test
+npm run ocr:smoke:venv -- "C:\Users\fengx\Desktop\文字图片3.png"
 
 # 构建生产版本
 npm run build

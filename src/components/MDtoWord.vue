@@ -56,6 +56,16 @@
               {{ isReadingMd ? '读取中...' : '上传 MD' }}
             </button>
             <input type="file" ref="mdFileInput" @change="handleMdUpload" accept=".md" style="display: none;">
+            <button class="action-btn" @click="triggerImageUpload" :disabled="isRecognizingImage">
+              <svg v-if="!isRecognizingImage" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3 16l4-4a2 2 0 012.828 0L15 17m-2-2l1.586-1.586a2 2 0 012.828 0L21 17M5 7h.01M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z">
+                </path>
+              </svg>
+              <span v-else class="spinner mini"></span>
+              {{ imageUploadButtonText }}
+            </button>
+            <input type="file" ref="imageFileInput" @change="handleImageUpload" accept="image/*" style="display: none;">
           </div>
         </div>
         <!-- 使用 v-model 进行数据双向绑定，并添加拖拽支持 -->
@@ -109,8 +119,11 @@ const isWpsCompatible = ref(false); // 默认使用标准模式（原生公式�
 const isPreserveBreaks = ref(true);
 const isDownloading = ref(false);
 const isReadingMd = ref(false);
+const isRecognizingImage = ref(false);
+const ocrProgress = ref(0);
 const isDragging = ref(false);
 const mdFileInput = ref(null);
+const imageFileInput = ref(null);
 const textareaRef = ref(null);
 const previewRef = ref(null);
 const hoveredElement = ref(null);
@@ -119,6 +132,11 @@ const isScrolling = ref(false);
 const isCopied = ref(false);
 const documentTitle = ref('文档导出');
 let scrollTimeout = null;
+
+const imageUploadButtonText = computed(() => {
+  if (!isRecognizingImage.value) return '上传图片';
+  return '识别中...';
+});
 
 const handleTextareaScroll = () => {
   if (activePane.value !== 'textarea') return;
@@ -272,6 +290,10 @@ const triggerMdUpload = () => {
   mdFileInput.value?.click();
 };
 
+const triggerImageUpload = () => {
+  imageFileInput.value?.click();
+};
+
 /**
  * 拖拽相关处理
  */
@@ -300,11 +322,19 @@ const handleMdUpload = (event) => {
   event.target.value = ''; // 清空以支持重复上传
 };
 
+const handleImageUpload = (event) => {
+  const file = event.target.files[0];
+  if (file) handleFile(file);
+  event.target.value = ''; // 清空以支持重复上传
+};
+
 const handleFile = async (file) => {
   if (file.name.toLowerCase().endsWith('.md')) {
     await processMd(file);
+  } else if (file.type.startsWith('image/')) {
+    await processImage(file);
   } else {
-    alert('暂不支持该文件格式，请上传 Markdown 文件。');
+    alert('暂不支持该文件格式，请上传 Markdown 文件或图片文件。');
   }
 };
 
@@ -322,6 +352,92 @@ const processMd = async (file) => {
     alert('读取文件失败，请重试。');
   } finally {
     isReadingMd.value = false;
+  }
+};
+
+const normalizeOcrText = (text) => {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
+const getLocalOcrBaseUrl = () => {
+  return (
+    window.MD_TO_WORD_CONFIG?.localOcrUrl ||
+    import.meta.env.VITE_LOCAL_OCR_URL ||
+    'http://127.0.0.1:8765'
+  ).replace(/\/$/, '');
+};
+
+const getLocalOcrBaseUrlCandidates = () => {
+  const configuredUrl = getLocalOcrBaseUrl();
+  return Array.from(new Set([
+    configuredUrl,
+    'http://127.0.0.1:8765',
+    'http://localhost:8765'
+  ]));
+};
+
+const parseOcrErrorMessage = async (response) => {
+  try {
+    const data = await response.json();
+    return data?.detail || data?.message || response.statusText;
+  } catch (error) {
+    return response.statusText;
+  }
+};
+
+const requestLocalStructuredOcr = async (file) => {
+  const errors = [];
+
+  for (const baseUrl of getLocalOcrBaseUrlCandidates()) {
+    const formData = new FormData();
+    formData.append('image', file, file.name);
+
+    try {
+      const response = await fetch(`${baseUrl}/api/ocr/image`, {
+        method: 'POST',
+        mode: 'cors',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const message = await parseOcrErrorMessage(response);
+        throw new Error(message || `OCR 服务返回 ${response.status}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      errors.push(`${baseUrl}: ${error?.message || error}`);
+    }
+  }
+
+  throw new Error(errors.join('\n'));
+};
+
+const processImage = async (file) => {
+  isRecognizingImage.value = true;
+
+  try {
+    const result = await requestLocalStructuredOcr(file);
+    const text = normalizeOcrText(result.markdown || '');
+
+    if (!text) throw new Error('本地 OCR 服务没有返回 Markdown 内容。');
+
+    markdownContent.value = text;
+    documentTitle.value = file.name.replace(/\.[^.]+$/i, '') || '图片识别结果';
+    ocrProgress.value = 100;
+  } catch (error) {
+    console.error('本地结构化 OCR 识别失败:', error);
+    alert(
+      '图片识别失败。请先启动本地 OCR 服务：\n\n' +
+      'npm run ocr:serve:venv\n\n' +
+      `错误详情：${error?.message || '无法连接到本地 OCR 服务'}`
+    );
+  } finally {
+    isRecognizingImage.value = false;
   }
 };
 </script>

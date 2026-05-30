@@ -1,0 +1,1 @@
+"""Local OCR service package."""

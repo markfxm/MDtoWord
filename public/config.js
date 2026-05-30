@@ -4,4 +4,5 @@ window.MD_TO_WORD_CONFIG = {
   // set this to the function's public HTTP URL, for example:
   // imageProxyUrl: 'https://example.com/image-proxy',
   imageProxyUrl: '',
+  localOcrUrl: '',
 };

@@ -53,4 +53,9 @@ const imageProxyPlugin = () => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue(), imageProxyPlugin()],
+  server: {
+    watch: {
+      ignored: ['**/.venv-ocr/**'],
+    },
+  },
 })
