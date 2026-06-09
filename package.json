@@ -10,7 +10,8 @@
     "ocr:serve": "python -m uvicorn ocr_service.app:app --host 127.0.0.1 --port 8765",
     "ocr:serve:venv": ".\\.venv-ocr\\Scripts\\python.exe -m uvicorn ocr_service.app:app --host 127.0.0.1 --port 8765",
     "ocr:smoke": "python ocr_service/smoke_test.py",
-    "ocr:smoke:venv": ".\\.venv-ocr\\Scripts\\python.exe ocr_service/smoke_test.py"
+    "ocr:smoke:venv": ".\\.venv-ocr\\Scripts\\python.exe ocr_service/smoke_test.py",
+    "worker:image:deploy": "npx wrangler deploy --config cloudflare-worker/wrangler.toml"
   },
   "dependencies": {
     "docx": "^9.6.1",

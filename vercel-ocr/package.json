@@ -1,0 +1,17 @@
+{
+  "name": "md-word-ocr-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "deploy": "vercel --prod",
+    "check": "node --check api/ocr/image.js"
+  },
+  "dependencies": {
+    "@paddleocr/api-sdk": "^0.1.0",
+    "formidable": "^3.5.4"
+  },
+  "devDependencies": {
+    "vercel": "^54.6.1"
+  }
+}

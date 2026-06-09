@@ -363,21 +363,32 @@ const normalizeOcrText = (text) => {
     .trim();
 };
 
+const getSameOriginOcrBaseUrl = () => {
+  if (typeof window === 'undefined') return '';
+  return window.location?.origin || '';
+};
+
 const getLocalOcrBaseUrl = () => {
   return (
     window.MD_TO_WORD_CONFIG?.localOcrUrl ||
     import.meta.env.VITE_LOCAL_OCR_URL ||
+    getSameOriginOcrBaseUrl() ||
     'http://127.0.0.1:8765'
   ).replace(/\/$/, '');
 };
 
 const getLocalOcrBaseUrlCandidates = () => {
+  const explicitUrl = window.MD_TO_WORD_CONFIG?.localOcrUrl || import.meta.env.VITE_LOCAL_OCR_URL;
+  if (explicitUrl) return [explicitUrl.replace(/\/$/, '')];
+
+  const sameOriginUrl = getSameOriginOcrBaseUrl();
   const configuredUrl = getLocalOcrBaseUrl();
   return Array.from(new Set([
+    sameOriginUrl,
     configuredUrl,
     'http://127.0.0.1:8765',
     'http://localhost:8765'
-  ]));
+  ].filter(Boolean).map((url) => url.replace(/\/$/, ''))));
 };
 
 const parseOcrErrorMessage = async (response) => {
@@ -417,6 +428,18 @@ const requestLocalStructuredOcr = async (file) => {
   throw new Error(errors.join('\n'));
 };
 
+const getOcrFailureHelpText = (error) => {
+  return [
+    '图片识别失败。可选择以下任一方式启用 OCR：',
+    '',
+    '1. 使用 PaddleOCR 访问令牌：在项目根目录创建 .env.local，写入 PADDLEOCR_ACCESS_TOKEN=你的令牌，确认已运行 npm install --prefix vercel-ocr，然后重启 npm run dev。',
+    '2. 使用已部署的 Vercel OCR 代理：在 public/config.js 或 VITE_LOCAL_OCR_URL 中设置 localOcrUrl。',
+    '3. 使用本地 Pix2Text OCR 服务：npm run ocr:serve:venv。',
+    '',
+    `错误详情：${error?.message || '无法连接到 OCR 服务'}`
+  ].join('\n');
+};
+
 const processImage = async (file) => {
   isRecognizingImage.value = true;
 
@@ -431,11 +454,7 @@ const processImage = async (file) => {
     ocrProgress.value = 100;
   } catch (error) {
     console.error('本地结构化 OCR 识别失败:', error);
-    alert(
-      '图片识别失败。请先启动本地 OCR 服务：\n\n' +
-      'npm run ocr:serve:venv\n\n' +
-      `错误详情：${error?.message || '无法连接到本地 OCR 服务'}`
-    );
+    alert(getOcrFailureHelpText(error));
   } finally {
     isRecognizingImage.value = false;
   }

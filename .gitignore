@@ -3,6 +3,7 @@ logs
 *.log
 __pycache__/
 *.py[cod]
+vercel-ocr/.vercel/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

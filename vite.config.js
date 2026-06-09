@@ -1,7 +1,10 @@
-import { defineConfig } from 'vite'
+import { createRequire } from 'node:module'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const imageProxyPath = '/api/image-proxy'
+const ocrProxyPath = '/api/ocr/image'
+const require = createRequire(import.meta.url)
 
 const sendImageProxyResponse = async (req, res) => {
   try {
@@ -50,12 +53,60 @@ const imageProxyPlugin = () => ({
   },
 })
 
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [vue(), imageProxyPlugin()],
-  server: {
-    watch: {
-      ignored: ['**/.venv-ocr/**'],
-    },
+const createVercelLikeResponse = (res) => {
+  res.status = (statusCode) => {
+    res.statusCode = statusCode
+    return res
+  }
+  res.json = (data) => {
+    if (!res.headersSent) {
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+    }
+    res.end(JSON.stringify(data))
+  }
+  return res
+}
+
+const sendOcrProxyResponse = async (req, res) => {
+  try {
+    const handler = require('./vercel-ocr/api/ocr/image.js')
+    await handler(req, createVercelLikeResponse(res))
+  } catch (error) {
+    const missingDependency = error?.code === 'MODULE_NOT_FOUND'
+
+    res.statusCode = 500
+    res.setHeader('content-type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify({
+      detail: missingDependency
+        ? 'Missing OCR proxy dependencies. Run: npm install --prefix vercel-ocr'
+        : error?.message || 'Local PaddleOCR proxy failed',
+      name: error?.name || 'LocalOcrProxyError',
+    }))
+  }
+}
+
+const ocrProxyPlugin = () => ({
+  name: 'local-paddle-ocr-proxy',
+  configureServer(server) {
+    server.middlewares.use(ocrProxyPath, sendOcrProxyResponse)
   },
+  configurePreviewServer(server) {
+    server.middlewares.use(ocrProxyPath, sendOcrProxyResponse)
+  },
+})
+
+// https://vite.dev/config/
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  process.env.PADDLEOCR_ACCESS_TOKEN ||= env.PADDLEOCR_ACCESS_TOKEN
+
+  return {
+    plugins: [vue(), imageProxyPlugin(), ocrProxyPlugin()],
+    server: {
+      watch: {
+        ignored: ['**/.venv-ocr/**'],
+      },
+    },
+  }
 })
