@@ -38,6 +38,21 @@ marked.use({
         }
         return false;
       }
+    },
+    {
+      name: 'singleTilde',
+      level: 'inline',
+      start(src) { return src.match(/~(?!~)/)?.index; },
+      tokenizer(src) {
+        if (/^~(?!~)/.test(src)) {
+          return {
+            type: 'text',
+            raw: '~',
+            text: '~'
+          };
+        }
+        return false;
+      }
     }
   ]
 });
