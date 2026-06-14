@@ -2,6 +2,7 @@ import { saveAs } from 'file-saver';
 import html2canvas from 'html2canvas';
 import { isSimpleMath, convertSimpleMathToHtml } from './mathUtils.js';
 import { asWordCompatibleBlob } from './htmlDocxWord.js';
+import { replaceTwemojiInHtml } from './emojiUtils.js';
 
 const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -218,78 +219,14 @@ export const downloadWord = async ({
         li.innerHTML = li.innerHTML.trim().replace(/\n/g, ' ');
       });
 
+      clone.innerHTML = replaceTwemojiInHtml(clone.innerHTML);
+
       const failedImages = await inlineImagesForWord(clone);
       if (failedImages.length > 0) {
         throw new Error(`有 ${failedImages.length} 张图片无法内嵌。静态部署时需要配置可用的图片代理服务。`);
       }
 
-      let finalHtmlBody = clone.innerHTML;
-
-      // ====================== Emoji 转图片（完整函数已内置） ======================
-      const wrapEmojisInHtml = (htmlStr) => {
-        const emojiRegex = /([\u{1F300}-\u{1F5FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F191}-\u{1F251}])/gu;
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = htmlStr;
-
-        const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        const textNodes = [];
-        while ((node = walker.nextNode())) {
-          if (emojiRegex.test(node.nodeValue)) textNodes.push(node);
-        }
-
-        const toCodePoint = (unicodeSurrogates) => {
-          const r = [];
-          let c = 0, p = 0, i = 0;
-          while (i < unicodeSurrogates.length) {
-            c = unicodeSurrogates.charCodeAt(i++);
-            if (p) {
-              r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
-              p = 0;
-            } else if (0xD800 <= c && c <= 0xDBFF) {
-              p = c;
-            } else {
-              r.push(c.toString(16));
-            }
-          }
-          return r.join('-');
-        };
-
-        textNodes.forEach(n => {
-          emojiRegex.lastIndex = 0;
-          const fragment = document.createDocumentFragment();
-          let lastIdx = 0;
-          let match;
-          while ((match = emojiRegex.exec(n.nodeValue)) !== null) {
-            if (match.index > lastIdx) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx, match.index)));
-            const codePoint = toCodePoint(match[0]);
-            const img = document.createElement('img');
-            img.src = `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${codePoint}.png`;
-            img.alt = match[0];
-            let fontSizePx = 18;
-            try {
-              const computedStyle = window.getComputedStyle(n.parentNode || n);
-              if (computedStyle.fontSize.endsWith('px')) fontSizePx = parseFloat(computedStyle.fontSize);
-            } catch (e) { }
-            const size = Math.round(fontSizePx * 1.2);
-            img.setAttribute('width', size.toString());
-            img.setAttribute('height', size.toString());
-            img.style.height = '1.2em';
-            img.style.width = '1.2em';
-            img.style.margin = '0 0.1em';
-            img.style.verticalAlign = '-0.2em';
-            img.style.display = 'inline-block';
-            fragment.appendChild(img);
-            lastIdx = emojiRegex.lastIndex;
-          }
-          if (lastIdx < n.nodeValue.length) fragment.appendChild(document.createTextNode(n.nodeValue.slice(lastIdx)));
-          n.parentNode.replaceChild(fragment, n);
-        });
-
-        return tempDiv.innerHTML;
-      };
-
-      finalHtmlBody = wrapEmojisInHtml(finalHtmlBody);
+      const finalHtmlBody = clone.innerHTML;
 
       // 注入 Word 专用样式（优化 MathML 显示）
       const documentHtml = `
